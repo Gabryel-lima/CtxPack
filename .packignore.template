@@ -1,0 +1,63 @@
+# .packignore — ctxpack exclusion rules
+# Syntax: one pattern per line (glob-style, same logic as .gitignore)
+# Lines starting with # are comments.
+#
+# ─────────────────────────────────────
+# ALREADY EXCLUDED AUTOMATICALLY (no need to list here):
+#   .git, node_modules, __pycache__, build, dist, bin, obj,
+#   target, .venv, venv, .idea, .vscode
+#   *.o *.a *.so *.exe *.bin *.img *.png *.jpg *.pdf *.zip ...
+# ─────────────────────────────────────
+
+# Project-specific: datasets, test fixtures, large assets
+datasets/
+data/
+assets/
+samples/
+fixtures/
+
+# Generated documentation
+docs/generated/
+*.html.bak
+
+# Temporary / scratch files
+scratch/
+tmp/
+*.tmp
+*.bak
+*.swp
+
+# Secrets / credentials (always exclude)
+.env
+*.env
+secrets.*
+credentials.*
+*.pem
+*.key
+*.cert
+
+# Compiled Python (redundant but explicit)
+*.pyc
+*.pyo
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Large lock files (optional — comment out if you want them)
+package-lock.json
+yarn.lock
+Cargo.lock
+poetry.lock
+
+# Log files
+*.log
+logs/
+
+# Coverage / test output
+coverage/
+htmlcov/
+.pytest_cache/
