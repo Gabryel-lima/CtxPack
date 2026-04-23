@@ -9,13 +9,15 @@ Usage:
 Options:
     -o, --output FILE       Output file path (default: <project_name>.ctx.md)
     -e, --ext EXT [EXT...]  Whitelist of extensions (e.g. -e c h py asm)
-    -x, --exclude DIR [..] Extra dirs to exclude beyond .packignore
+    -x, --exclude DIR [..]  Extra dirs to exclude beyond .packignore
+    --setup                 Generate a .packignore template in current dir
     --strip-comments        Strip single-line comments (// and #)
     --no-tree               Omit directory tree
     --max-lines N           Skip files longer than N lines (default: 2000)
     --summary               Print token estimate summary only (no file written)
 
 Examples:
+    python ctxpack.py --setup  # Generate a .packignore template in current dir
     python ctxpack.py ./AlmaOS
     python ctxpack.py ./AlmaOS -e c h asm --strip-comments
     python ctxpack.py ./gfx -e c h --max-lines 500 -o gfx_context.ctx.md
@@ -85,6 +87,39 @@ HARDCODED_IGNORE_FILES = {
 # ─────────────────────────────────────────────
 # .PACKIGNORE PARSER
 # ─────────────────────────────────────────────
+
+def generate_packignore_template(project_dir: Path = Path.cwd()) -> None:
+    """Generate a .packignore template in the current directory."""
+    pack_template = project_dir / ".packignore.template"
+    packignore = project_dir / ".packignore"
+
+    # If .packignore already exists, do nothing
+    if packignore.exists():
+        print(f"[ctxpack] .packignore already exists at {packignore.resolve()}")
+        return
+
+    # Default template content to use when no template exists
+    default_template = (
+        "# .packignore — patterns to exclude from ctxpack\n"
+        "# Lines starting with # are comments.\n"
+        "# Examples:\n"
+        "# node_modules\n"
+        "# *.lock\n"
+        "# build/\n"
+    )
+
+    try:
+        # Ensure a template exists; create one from defaults if missing
+        if not pack_template.exists():
+            pack_template.write_text(default_template, encoding="utf-8")
+            print(f"[ctxpack] Created template at {pack_template.resolve()}")
+
+        # Copy template contents into .packignore
+        content = pack_template.read_text(encoding="utf-8")
+        packignore.write_text(content, encoding="utf-8")
+        print(f"[ctxpack] Generated .packignore from template at {packignore.resolve()}")
+    except Exception as e:
+        print(f"[ctxpack] ERROR generating .packignore: {e}", file=sys.stderr)
 
 def load_packignore(project_dir: Path) -> list[str]:
     """Load .packignore patterns from project root."""
@@ -382,6 +417,11 @@ def main():
         help="Additional directory or file names to exclude.",
     )
     parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Generate a .packignore template in the current directory and exit.",
+    )
+    parser.add_argument(
         "--strip-comments",
         action="store_true",
         help="Strip single-line comments (// and #) from source files.",
@@ -404,6 +444,10 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.setup:
+        generate_packignore_template()
+        sys.exit(0)
 
     project_dir = Path(args.project_dir).resolve()
     if not project_dir.is_dir():

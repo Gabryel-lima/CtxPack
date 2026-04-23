@@ -35,9 +35,15 @@ options:
   --no-tree             Omit directory tree
   --max-lines N         Skip files longer than N lines (default: 2000)
   --summary             Print token estimate summary only (no file written)
+  --setup               Generate a .packignore template in the current directory and exit.
 ```
 
 ## Examples
+
+* First, generate a `.packignore` template in your project directory to specify which files/directories to exclude:
+```bash
+python ctxpack.py --setup
+```
 
 **Pack the current directory:**
 ```bash
