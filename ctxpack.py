@@ -273,17 +273,17 @@ def build_pack(
     # ── Header ──────────────────────────────
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     header = f"""# CONTEXT PACK — {project_dir.name.upper()}
-Generated: {now}
-Files included: {len(files)}
-Strip comments: {strip_comments}
+    Generated: {now}
+    Files included: {len(files)}
+    Strip comments: {strip_comments}
 
----
-## HOW TO USE THIS FILE
-Paste this file into any LLM or agent context.
-Ask: "I will give you the full context of my project. Analyze it." and proceed.
-Each file is delimited by `>>>` and `<<<` markers.
----
-"""
+    ---
+    ## HOW TO USE THIS FILE
+    Paste this file into any LLM or agent context.
+    Ask: "I will give you the full context of my project. Analyze it." and proceed.
+    Each file is delimited by `>>>` and `<<<` markers.
+    ---
+    """
     sections.append(header)
 
     # ── Tree ────────────────────────────────
@@ -413,11 +413,13 @@ def main():
     allowed_ext = set(args.ext) if args.ext else DEFAULT_EXTENSIONS
     extra_ignore = set(args.exclude)
 
-    output_path = (
-        Path(args.output).resolve()
-        if args.output
-        else Path.cwd() / f"{project_dir.name}.ctx.md"
-    )
+    if args.output:
+        out = Path(args.output)
+        if out.suffix == "":
+            out = out.with_suffix(".md")
+        output_path = out.resolve()
+    else:
+        output_path = Path.cwd() / f"{project_dir.name}.ctx.md"
 
     build_pack(
         project_dir=project_dir,
