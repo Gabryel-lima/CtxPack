@@ -700,7 +700,7 @@ def main():
         from analyzers.module_mapper import ModuleMapper
         from analyzers.relation_finder import RelationFinder
         from analyzers.tag_parser import TagParser
-        from analyzers.symbol_extractor import SymbolExtractor
+        from analyzers.symbol_extractor import LanguageSymbolExtractor, SymbolExtractor
 
         ctx = DSLContext()
         ctx.project.name = project_dir.name
