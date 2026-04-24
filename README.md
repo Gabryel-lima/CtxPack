@@ -35,7 +35,14 @@ options:
   --no-tree             Omit directory tree
   --max-lines N         Skip files longer than N lines (default: 2000)
   --summary             Print token estimate summary only (no file written)
-  --setup               Generate a .packignore template in the current directory and exit.
+  --setup               Generate a .packignore template in the current directory and exit
+  --chunk               Enable line-based chunking of files
+  --chunk-size N        Lines per chunk when --chunk is enabled (default: 200)
+  --chunk-overlap N     Overlap lines between chunks (default: 20)
+  --embed               Compute deterministic embeddings for each chunk
+  --embed-dim N         Embedding vector dimension when --embed is enabled (default: 512)
+  --readable            Also generate a human-readable full context file (disabled by default)
+  --readable-output FILE  Path for human-readable output (default: <project_name>.readable.ctx.md)
 ```
 
 ## Examples

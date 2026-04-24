@@ -13,8 +13,15 @@ Options:
     --setup                 Generate a .packignore template in current dir
     --strip-comments        Strip single-line comments (// and #)
     --no-tree               Omit directory tree
-    --max-lines N           Skip files longer than N lines (default: 2000)
+    --max-lines N           Chunking/embedding options  Skip files longer than N lines (default: 2000)
     --summary               Print token estimate summary only (no file written)
+    --chunk                 Enable line-based chunking of files
+    --chunk-size N          Lines per chunk when --chunk is enabled (default: 200)
+    --chunk-overlap N       Overlap lines between chunks (default: 20)
+    --embed                 Compute deterministic embeddings for each chunk
+    --embed-dim N           Embedding vector dimension when --embed is enabled (default: 512)
+    --readable              Also generate a human-readable full context file (disabled by default)
+    --readable-output FILE  Path for human-readable output (default: <project_name>.
 
 Examples:
     python ctxpack.py --setup  # Generate a .packignore template in current dir
@@ -23,10 +30,13 @@ Examples:
     python ctxpack.py ./gfx -e c h --max-lines 500 -o gfx_context.ctx.md
 """
 
-import os
+#import os
 import sys
 import argparse
 import datetime
+import hashlib
+import math
+import re
 from pathlib import Path
 
 # ─────────────────────────────────────────────
@@ -278,57 +288,130 @@ def estimate_tokens(text: str) -> int:
 
 
 # ─────────────────────────────────────────────
+# CHUNKING & EMBEDDING (pure Python implementations)
+# ─────────────────────────────────────────────
+
+
+def chunk_text_lines(content: str, size: int, overlap: int):
+    """Yield (start_line, end_line, chunk_text) for content split by lines.
+    Lines are 1-based in reported ranges.
+    """
+    lines = content.splitlines()
+    if size <= 0:
+        yield (1, len(lines), "\n".join(lines))
+        return
+    i = 0
+    total = len(lines)
+    step = max(1, size - overlap)
+    while i < total:
+        start = i
+        end = min(i + size, total)
+        chunk = "\n".join(lines[start:end])
+        yield (start + 1, end, chunk)
+        i += step
+
+
+def compute_embedding(text: str, dim: int = 64):
+    """Deterministic, dependency-free embedding.
+
+    Strategy: tokenize into alphanumeric tokens, for each token hash with sha256,
+    and add the byte-values into a fixed-dimension vector which is finally
+    L2-normalized. This provides a consistent numeric fingerprint usable for
+    simple similarity/indexing without external libs.
+    """
+    vec = [0.0] * dim
+    # simple tokenization
+    toks = re.findall(r"\w+", text.lower())
+    if not toks:
+        return [0.0] * dim
+
+    for tok in toks:
+        h = hashlib.sha256(tok.encode("utf-8")).digest()  # 32 bytes
+        for i in range(dim):
+            # reuse the hashed bytes cyclically to fill dim
+            vec[i] += h[i % len(h)]
+
+    # normalize
+    norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+    vec = [v / norm for v in vec]
+    return vec
+
+
+def embedding_to_str(vec: list[float], max_values: int = None) -> str:
+    """Serialize embedding to a compact comma-separated string (rounded).
+    Optionally limit the number of values output (for readability).
+    """
+    if max_values is None or max_values >= len(vec):
+        return ",".join(f"{v:.6f}" for v in vec)
+    else:
+        head = ",".join(f"{v:.6f}" for v in vec[:max_values])
+        return head + ",..."
+
+
+# ─────────────────────────────────────────────
 # PACK BUILDER
 # ─────────────────────────────────────────────
 
 def build_pack(
     project_dir: Path,
-    output_path: Path,
+    tokens_output_path: Path,
+    readable_output_path: Path | None,
     allowed_extensions: set[str],
     extra_ignore: set[str],
     strip_comments: bool,
     include_tree: bool,
     max_lines: int,
     summary_only: bool,
+    use_chunking: bool = False,
+    chunk_size: int = 200,
+    chunk_overlap: int = 20,
+    do_embed: bool = False,
+    embed_dim: int = 64,
 ) -> None:
+    """Build two outputs:
+    - tokens_output_path: compact, tokens/index-only file (default)
+    - readable_output_path: optional human-readable full context (when requested)
+    """
     ignore_patterns = load_packignore(project_dir)
 
     print(f"[ctxpack] Project:      {project_dir.resolve()}")
     print(f"[ctxpack] Extensions:   {', '.join(sorted(allowed_extensions))}")
     print(f"[ctxpack] Packignore:   {len(ignore_patterns)} pattern(s) loaded")
     print(f"[ctxpack] Strip cmts:   {strip_comments}")
-    print()
+    print(f"[ctxpack] Chunking:     {use_chunking} (size={chunk_size}, overlap={chunk_overlap})")
+    print(f"[ctxpack] Embeddings:   {do_embed} (dim={embed_dim})\n")
 
     tree_str, files = build_tree(
         project_dir, ignore_patterns, allowed_extensions, extra_ignore, max_lines
     )
 
-    sections = []
+    # Prepare two representations
+    tokens_sections = []
+    readable_sections = []
 
-    # ── Header ──────────────────────────────
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    header = f"""# CONTEXT PACK — {project_dir.name.upper()}
-    Generated: {now}
-    Files included: {len(files)}
-    Strip comments: {strip_comments}
+    header_tokens = (
+        f"# TOKEN PACK — {project_dir.name.upper()}\n"
+        f"Generated: {now}\n"
+        f"Files included: {len(files)}\n"
+        f"Chunking: {use_chunking} (size={chunk_size}, overlap={chunk_overlap})\n"
+        f"Embeddings: {do_embed} (dim={embed_dim})\n"
+        "---\n"
+    )
+    tokens_sections.append(header_tokens)
 
-    ---
-    ## HOW TO USE THIS FILE
-    Paste this file into any LLM or agent context.
-    Ask: "I will give you the full context of my project. Analyze it." and proceed.
-    Each file is delimited by `>>>` and `<<<` markers.
-    ---
-    """
-    sections.append(header)
+    header_readable = f"# CONTEXT PACK — {project_dir.name.upper()}\nGenerated: {now}\nFiles included: {len(files)}\nStrip comments: {strip_comments}\n---\n"
+    if readable_output_path is not None:
+        readable_sections.append(header_readable)
 
-    # ── Tree ────────────────────────────────
-    if include_tree:
-        sections.append("## DIRECTORY TREE\n```\n" + tree_str + "\n```\n")
-
-    # ── Files ───────────────────────────────
-    sections.append("## FILES\n")
+    # Include tree only in readable output (keeps tokens file compact)
+    if include_tree and readable_output_path is not None:
+        readable_sections.append("## DIRECTORY TREE\n```\n" + tree_str + "\n```\n")
 
     total_lines = 0
+    index_entries = []  # (chunk_id, rel, start, end, embedding_str)
+    chunk_id = 0
+
     for fpath in files:
         rel = fpath.relative_to(project_dir)
         ext = fpath.suffix.lstrip(".")
@@ -341,44 +424,82 @@ def build_pack(
         if strip_comments and content:
             content = strip_single_line_comments(content, ext)
 
-        line_count = content.count("\n") + 1
-        total_lines += line_count
+        if use_chunking and content:
+            for start, end, chunk in chunk_text_lines(content, chunk_size, chunk_overlap):
+                chunk_id += 1
+                line_count = chunk.count("\n") + 1
+                total_lines += line_count
+                # readable: include chunk content
+                if readable_output_path is not None:
+                    lang = ext if ext else "text"
+                    readable_sections.append(
+                        f">>> CHUNK: {rel}  (lines {start}-{end})\n"
+                        f"```{lang}\n{chunk.rstrip()}\n```\n"
+                        f"<<< END CHUNK: {rel}  (lines {start}-{end})\n"
+                    )
+                # tokens/index: add embedding entry (no full text)
+                if do_embed:
+                    vec = compute_embedding(chunk, dim=embed_dim)
+                    emb_str = embedding_to_str(vec, max_values=embed_dim)
+                    index_entries.append((chunk_id, str(rel), start, end, emb_str))
+        else:
+            line_count = content.count("\n") + 1
+            total_lines += line_count
+            if readable_output_path is not None:
+                lang = ext if ext else "text"
+                readable_sections.append(
+                    f">>> FILE: {rel}  ({line_count} lines)\n"
+                    f"```{lang}\n{content.rstrip()}\n```\n"
+                    f"<<< END: {rel}\n"
+                )
+            if do_embed:
+                # treat whole file as one chunk for index purposes
+                chunk_id += 1
+                vec = compute_embedding(content, dim=embed_dim)
+                emb_str = embedding_to_str(vec, max_values=embed_dim)
+                index_entries.append((chunk_id, str(rel), 1, line_count, emb_str))
 
-        lang = ext if ext else "text"
-        sections.append(
-            f">>> FILE: {rel}  ({line_count} lines)\n"
-            f"```{lang}\n{content.rstrip()}\n```\n"
-            f"<<< END: {rel}\n"
-        )
+    # Write tokens/index output
+    if do_embed and index_entries:
+        tokens_sections.append("## INDEX\n")
+        tokens_sections.append("ChunkID | File | Start | End | Embedding (truncated)\n")
+        tokens_sections.append("---\n")
+        for cid, fname, start, end, emb in index_entries:
+            tokens_sections.append(f"{cid} | {fname} | {start} | {end} | {emb}\n")
 
-    full_output = "\n".join(sections)
-    token_estimate = estimate_tokens(full_output)
-
-    # ── Footer ──────────────────────────────
+    # Footer / summary
     footer = (
         f"\n---\n"
         f"## PACK SUMMARY\n"
         f"- Files: {len(files)}\n"
         f"- Total lines: {total_lines:,}\n"
-        f"- Estimated tokens: ~{token_estimate:,}\n"
+        f"- Estimated tokens: ~{estimate_tokens(''.join(tokens_sections)):,}\n"
+        f"- Output size (tokens file): ~{len(''.join(tokens_sections)) // 1024} KB\n"
         f"- Generated by: ctxpack.py\n"
     )
-    full_output += footer
+
+    tokens_output = "\n".join(tokens_sections) + footer
+    readable_output = None
+    if readable_output_path is not None:
+        readable_output = "\n".join(readable_sections) + footer
+
+    token_estimate = estimate_tokens(tokens_output)
 
     if summary_only:
         print(f"[ctxpack] Files:           {len(files)}")
         print(f"[ctxpack] Total lines:     {total_lines:,}")
         print(f"[ctxpack] Estimated tokens: ~{token_estimate:,}")
-        print(f"[ctxpack] Output size:     ~{len(full_output) // 1024} KB")
+        print(f"[ctxpack] Output size (tokens file): ~{len(tokens_output) // 1024} KB")
         return
 
-    output_path.write_text(full_output, encoding="utf-8")
+    # write tokens file (default)
+    tokens_output_path.write_text(tokens_output, encoding="utf-8")
+    print(f"[ctxpack] Tokens output written:  {tokens_output_path.resolve()}")
 
-    print(f"[ctxpack] Files included:  {len(files)}")
-    print(f"[ctxpack] Total lines:     {total_lines:,}")
-    print(f"[ctxpack] Estimated tokens: ~{token_estimate:,}")
-    print(f"[ctxpack] Output size:     ~{len(full_output) // 1024} KB")
-    print(f"[ctxpack] Output written:  {output_path.resolve()}")
+    # optionally write readable file
+    if readable_output_path is not None and readable_output is not None:
+        readable_output_path.write_text(readable_output, encoding="utf-8")
+        print(f"[ctxpack] Readable output written: {readable_output_path.resolve()}")
 
 
 # ─────────────────────────────────────────────
@@ -400,7 +521,7 @@ def main():
     parser.add_argument(
         "-o", "--output",
         default=None,
-        help="Output file path (default: <project_name>.ctx.md)",
+        help="Output file path for tokens output (default: <project_name>.tokens.ctx.md)",
     )
     parser.add_argument(
         "-e", "--ext",
@@ -442,6 +563,44 @@ def main():
         action="store_true",
         help="Print token/file summary only — do not write output file.",
     )
+    parser.add_argument(
+        "--chunk",
+        action="store_true",
+        help="Split files into line-based chunks for indexing.",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=200,
+        help="Lines per chunk when --chunk is enabled (default: 200).",
+    )
+    parser.add_argument(
+        "--chunk-overlap",
+        type=int,
+        default=20,
+        help="Overlap lines between consecutive chunks (default: 20).",
+    )
+    parser.add_argument(
+        "--embed",
+        action="store_true",
+        help="Compute deterministic embeddings for each chunk (pure Python).",
+    )
+    parser.add_argument(
+        "--embed-dim",
+        type=int,
+        default=64,
+        help="Embedding vector dimension when --embed is enabled (default: 64).",
+    )
+    parser.add_argument(
+        "--readable",
+        action="store_true",
+        help="Also generate a human-readable full context file (disabled by default).",
+    )
+    parser.add_argument(
+        "--readable-output",
+        default=None,
+        help="Path for the human-readable output file (default: <project_name>.ctx.md).",
+    )
 
     args = parser.parse_args()
 
@@ -457,23 +616,43 @@ def main():
     allowed_ext = set(args.ext) if args.ext else DEFAULT_EXTENSIONS
     extra_ignore = set(args.exclude)
 
+    # Determine tokens output path (default: <project>.tokens.ctx.md)
     if args.output:
         out = Path(args.output)
         if out.suffix == "":
             out = out.with_suffix(".md")
-        output_path = out.resolve()
+        tokens_output = out.resolve()
     else:
-        output_path = Path.cwd() / f"{project_dir.name}.ctx.md"
+        tokens_output = Path.cwd() / f"{project_dir.name}.tokens.ctx.md"
+
+    # Determine readable output path if requested
+    generate_readable = bool(args.readable)
+    if generate_readable:
+        if args.readable_output:
+            ro = Path(args.readable_output)
+            if ro.suffix == "":
+                ro = ro.with_suffix(".md")
+            readable_output = ro.resolve()
+        else:
+            readable_output = Path.cwd() / f"{project_dir.name}.ctx.md"
+    else:
+        readable_output = None
 
     build_pack(
         project_dir=project_dir,
-        output_path=output_path,
+        tokens_output_path=tokens_output,
+        readable_output_path=readable_output,
         allowed_extensions=allowed_ext,
         extra_ignore=extra_ignore,
         strip_comments=args.strip_comments,
         include_tree=not args.no_tree,
         max_lines=args.max_lines,
         summary_only=args.summary,
+        use_chunking=args.chunk,
+        chunk_size=args.chunk_size,
+        chunk_overlap=args.chunk_overlap,
+        do_embed=args.embed,
+        embed_dim=args.embed_dim,
     )
 
 
