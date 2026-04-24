@@ -20,9 +20,9 @@ usage: ctxpack.py [-h] [-o OUTPUT] [-e EXT [EXT ...]] [-x NAME [NAME ...]]
                   [--max-lines N] [--summary] [--chunk]
                   [--chunk-size N] [--chunk-overlap N]
                   [--embed] [--embed-dim N] [--readable]
-                  [--readable-output FILE] [--semantic]
-                  [--no-semantic] [--semantic-only] [--now TEXT]
-                  [--sem-output FILE]
+                  [--readable-output FILE] [--no-semantic]
+                  [--no-semantic] [--no-semantic-only] [--now TEXT]
+                  [--no-output FILE]
                   project_dir
 
 ctxpack.py — Context Packer for LLM/Agent consumption
@@ -54,9 +54,9 @@ options:
                         Path for the human-readable output file (default: <project_name>.ctx.md)
 
 semantic DSL output:
-  --semantic            Generate .sem.ctx.md with semantic DSL output (enabled by default)
+  --semantic         Generate .sem.ctx.md with semantic DSL output (enabled by default)
   --no-semantic         Disable generation of .sem.ctx.md with semantic DSL output
-  --semantic-only       Generate only the .sem.ctx.md file and exit
+  --semantic-only    Generate only the .sem.ctx.md file and exit
   --now TEXT            Manually set the NOW field (current project focus)
   --no-output FILE      Path for the semantic DSL file (default: <project_name>.sem.ctx.md)
 ```

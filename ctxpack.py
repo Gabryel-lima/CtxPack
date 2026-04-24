@@ -616,13 +616,13 @@ def main():
         help="Path for the human-readable output file (default: <project_name>.ctx.md).",
     )
 
-    sem_group = parser.add_argument_group("semantic DSL output")
-    sem_group.add_argument(
+    no_group = parser.add_argument_group("semantic DSL output")
+    no_group.add_argument(
         "--semantic",
         action="store_true",
         help="Generate .sem.ctx.md with semantic DSL output (default: enabled)"
     )
-    sem_group.add_argument(
+    no_group.add_argument(
         "--no-semantic",
         action="store_false",
         dest="semantic",
@@ -630,18 +630,18 @@ def main():
     )
     parser.set_defaults(semantic=True)
 
-    sem_group.add_argument(
+    no_group.add_argument(
         "--semantic-only",
         action="store_true",
         help="Generate only the .sem.ctx.md file, omit the standard .ctx.md"
     )
-    sem_group.add_argument(
+    no_group.add_argument(
         "--now",
         metavar="TEXT",
         default="",
         help="Manually define the NOW field (current focus of the project)"
     )
-    sem_group.add_argument(
+    no_group.add_argument(
         "--no-output",
         dest="no_output",
         metavar="FILE",
@@ -695,26 +695,26 @@ def main():
                          RelationFinder, TagParser, SymbolExtractor]:
             Analyzer(project_dir, args).populate(ctx)
 
-        sem_path = args.sem_output or str(
+        no_path = args.no_output or str(
             project_dir / f"{ctx.project.name}.sem.ctx.md"
         )
         
-        sem_content = build_dsl(ctx)
+        no_content = build_dsl(ctx)
         
         # Append semantic tokens and file size
-        sem_tokens = estimate_tokens(sem_content)
-        sem_size_kb = len(sem_content.encode("utf-8")) // 1024
+        no_tokens = estimate_tokens(no_content)
+        no_size_kb = len(no_content.encode("utf-8")) // 1024
         
         footer = (
             f"\n\n---\n"
             f"## SEMANTIC PACK SUMMARY\n"
-            f"- Estimated tokens: ~{sem_tokens:,}\n"
-            f"- Output size: ~{sem_size_kb} KB\n"
+            f"- Estimated tokens: ~{no_tokens:,}\n"
+            f"- Output size: ~{no_size_kb} KB\n"
         )
-        sem_content += footer
+        no_content += footer
 
-        Path(sem_path).write_text(sem_content, encoding="utf-8")
-        print(f"[ctxpack] Semantic DSL written to: {sem_path}")
+        Path(no_path).write_text(no_content, encoding="utf-8")
+        print(f"[ctxpack] Semantic DSL written to: {no_path}")
 
     if args.semantic_only:
         sys.exit(0)
