@@ -4,7 +4,8 @@
 
 ## Features
 
-- **Single File Output**: Creates one `.ctx.md` file with your project's contents.
+- **Multiple Formats**: Creates different profiles (Semantic DSL by default `.sem.ctx.md`, Human Readable `.ctx.md` with `--readable`, and Token/Chunk files `.tokens.ctx.md`).
+- **Semantic DSL Mode**: Advanced semantic AST and import indexing of your project out of the box.
 - **Directory Tree**: Includes an ASCII directory tree for easy navigation.
 - **File Filtering**: Whitelist extensions and exclude specific directories/files.
 - **Comment Stripping**: Option to remove single-line comments to save tokens.
@@ -13,36 +14,51 @@
 
 ## Usage
 
-```
-usage: ctxpack.py [-h] [-o FILE] [-e EXT [EXT ...]] [-x NAME [NAME ...]]
-                  [--strip-comments] [--no-tree] [--max-lines N] [--summary]
-                  [project_dir]
+```text
+usage: ctxpack.py [-h] [-o OUTPUT] [-e EXT [EXT ...]] [-x NAME [NAME ...]]
+                  [--setup] [--strip-comments] [--no-tree]
+                  [--max-lines N] [--summary] [--chunk]
+                  [--chunk-size N] [--chunk-overlap N]
+                  [--embed] [--embed-dim N] [--readable]
+                  [--readable-output FILE] [--semantic]
+                  [--no-semantic] [--semantic-only] [--now TEXT]
+                  [--sem-output FILE]
+                  project_dir
 
 ctxpack.py — Context Packer for LLM/Agent consumption
-Collapses an entire project into a single .ctx.md file.
+Collapses an entire project into single or multiple .ctx.md files.
 
 positional arguments:
-  project_dir           Root directory of the project (default: current dir)
+  project_dir           Root directory of the project (e.g. . for current dir)
 
 options:
   -h, --help            show this help message and exit
-  -o, --output FILE     Output file path (default: <project_name>.ctx.md)
+  -o, --output OUTPUT   Output file path for tokens output (default: 
+                        <project_name>.tokens.ctx.md if chunk/embed enabled)
   -e, --ext EXT [EXT ...]
-                        Whitelist of extensions (e.g. -e c h py asm)
-  -x, --exclude DIR [..]
-                        Extra dirs to exclude beyond .packignore
-  --strip-comments      Strip single-line comments (// and #)
-  --no-tree             Omit directory tree
-  --max-lines N         Skip files longer than N lines (default: 2000)
-  --summary             Print token estimate summary only (no file written)
+                        Whitelist of file extensions (without dot)
+  -x, --exclude NAME [NAME ...]
+                        Additional directory or file names to exclude
   --setup               Generate a .packignore template in the current directory and exit
-  --chunk               Enable line-based chunking of files
+  --strip-comments      Strip single-line comments (// and #) from source files
+  --no-tree             Omit the directory tree section from the output
+  --max-lines N         Skip files with more than N lines (default: 2000)
+  --summary             Print token/file summary only — do not write output file
+  --chunk               Split files into line-based chunks for indexing
   --chunk-size N        Lines per chunk when --chunk is enabled (default: 200)
-  --chunk-overlap N     Overlap lines between chunks (default: 20)
+  --chunk-overlap N     Overlap lines between consecutive chunks (default: 20)
   --embed               Compute deterministic embeddings for each chunk
-  --embed-dim N         Embedding vector dimension when --embed is enabled (default: 512)
-  --readable            Also generate a human-readable full context file (disabled by default)
-  --readable-output FILE  Path for human-readable output (default: <project_name>.readable.ctx.md)
+  --embed-dim N         Embedding vector dimension when --embed is enabled (default: 64)
+  --readable            Generate a human-readable full context file (disabled by default)
+  --readable-output FILE
+                        Path for the human-readable output file (default: <project_name>.ctx.md)
+
+semantic DSL output:
+  --semantic            Generate .sem.ctx.md with semantic DSL output (enabled by default)
+  --no-semantic         Disable generation of .sem.ctx.md with semantic DSL output
+  --semantic-only       Generate only the .sem.ctx.md file and exit
+  --now TEXT            Manually set the NOW field (current project focus)
+  --no-output FILE      Path for the semantic DSL file (default: <project_name>.sem.ctx.md)
 ```
 
 ## Examples
