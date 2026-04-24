@@ -92,6 +92,39 @@ python ctxpack.py ./gfx -e c h --max-lines 500 -o gfx_context.ctx.md
 
 The script walks through the project directory, filters files based on your criteria, and concatenates them into a single Markdown file. Each file's content is enclosed in a fenced code block, making it easy for language models to parse.
 
+## Language Plugin System (Extensibility)
+
+CtxPack now includes a language plugin system for symbol detection and extraction. This lets you add support for new programming languages without modifying core code.
+
+- Where to add plugins: place a module in `analyzers/plugins/` that exposes a plugin factory `get_plugin()` (or `plugin`/`Plugin` symbol). The package is auto-discovered at runtime.
+- Plugin interface: implement the `LanguagePlugin` abstract class in `analyzers/language_plugin.py`. Required parts:
+  - `file_extensions() -> list[str]`: extensions handled by the plugin (no leading dot).
+  - `detect(content: str, path: Path) -> float`: optional heuristic score (0.0-1.0) for disambiguation.
+  - `extract_symbols(module, project_dir: Path) -> None`: populate `module.symbols` with `SymbolNode` entries.
+
+Example: `analyzers/plugins/python_plugin.py` is included as a reference implementation that uses Python's `ast` to extract functions, classes and methods.
+
+How detection works:
+- The `SymbolExtractor` first matches plugins by file extension. If multiple plugins register the same extension, it calls `detect()` on each to pick the highest-scoring plugin.
+- If no plugin registers an extension, the extractor will call `detect()` on all available plugins as a fallback, allowing content-based detection for ambiguous files.
+
+Does this extract semantics for other languages?
+- Short answer: yes — insofar as a plugin implements extraction logic for the target language.
+
+Details and limitations:
+- The core system only provides the plugin framework and orchestration (discovery, registration, and selection). Actual parsing and semantic extraction must be implemented by each plugin.
+- For some languages (Python, Java, JavaScript, Rust, etc.) you can write robust plugins using their AST/parser libraries. For others without a handy parser, a heuristic or regex-based approach can still extract useful symbols but will be less accurate.
+- Performance: expensive parsing should be implemented carefully (streaming, early exits) because ctxpack is intended to run on developer machines.
+- Safety: plugin code runs inside the same process; avoid executing untrusted code during detection/extraction.
+
+Adding a new language plugin (quick steps):
+1. Create `analyzers/plugins/<lang>_plugin.py`.
+2. Implement a class inheriting `LanguagePlugin` and implement `file_extensions`, `detect`, and `extract_symbols`.
+3. Provide `get_plugin()` that returns an instance of your plugin.
+4. Run `python ctxpack.py <project_dir>` — the plugin will be discovered automatically.
+
+If you want, we can add templates for C/C++ and Java plugins, or document common patterns for building robust detectors and parsers.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE). See the LICENSE file for details.
