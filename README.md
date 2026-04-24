@@ -5,9 +5,9 @@
 ## Features
 
 - **Multiple Formats**: Creates different profiles (Semantic DSL by default `.sem.ctx.md`, Human Readable `.ctx.md` with `--readable`, and Token/Chunk files `.tokens.ctx.md`).
-- **Semantic DSL Mode**: Advanced semantic AST and import indexing of your project out of the box.
+- **Semantic DSL Mode**: Advanced semantic AST and import indexing of your project out of the box, with smart heuristic inference (state, role, conventions).
 - **Directory Tree**: Includes an ASCII directory tree for easy navigation.
-- **File Filtering**: Whitelist extensions and exclude specific directories/files.
+- **Smart Filtering & Exclusion**: Automatic root detection and configurable category exclusions (build, vendor, test, doc, etc). Whitelist extensions and exclude specific directories/files.
 - **Comment Stripping**: Option to remove single-line comments to save tokens.
 - **File Size Limits**: Skip files that are too large.
 - **Token Estimation**: Provides a rough estimate of the token count.
