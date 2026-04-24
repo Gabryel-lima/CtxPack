@@ -235,12 +235,17 @@ def build_tree(
     allowed_extensions: set[str],
     extra_ignore: set[str],
     max_lines: int,
+    exclusion_filter=None,
 ) -> tuple[str, list[Path]]:
     """
     Returns:
         - ASCII tree string
         - Ordered list of file paths to include
     """
+    if exclusion_filter is None:
+        from filters.exclusion import ExclusionFilter
+        exclusion_filter = ExclusionFilter()
+
     tree_lines = []
     included_files = []
 
@@ -254,6 +259,7 @@ def build_tree(
             e for e in entries
             if not should_ignore_path(e, project_dir, ignore_patterns)
             and e.name not in extra_ignore
+            and not exclusion_filter.is_excluded(str(e.relative_to(project_dir)))
         ]
 
         for i, entry in enumerate(entries):
@@ -654,8 +660,18 @@ def main():
     if args.setup:
         generate_packignore_template()
         sys.exit(0)
+    
+    from filters.root_detector import detect_project_root
+    
+    start_dir = Path(args.project_dir).resolve()
+    detected_root = Path(detect_project_root(str(start_dir)))
+    
+    if detected_root != start_dir:
+        print(f"[ctxpack] Info: Adjusted project root from '{start_dir}' to detected root '{detected_root}'")
+        project_dir = detected_root
+    else:
+        project_dir = start_dir
 
-    project_dir = Path(args.project_dir).resolve()
     if not project_dir.is_dir():
         print(f"[ctxpack] ERROR: '{project_dir}' is not a valid directory.", file=sys.stderr)
         sys.exit(1)
