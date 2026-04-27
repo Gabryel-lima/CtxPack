@@ -1,8 +1,8 @@
 # CtxPack: Project Context Packer
 
-- Português (pt-BR): [README.pt-BR.md](README.pt-BR.md)
-
 `ctxpack.py` is a Python script that collapses an entire project's source code and structure into a single, LLM-friendly text file. This allows you to easily paste the entire context of a project into a large context window of a language model or agent.
+
+- Português (pt-BR): [README.pt-BR.md](README.pt-BR.md)
 
 ## Features
 
