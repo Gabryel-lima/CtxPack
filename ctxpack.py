@@ -42,7 +42,30 @@ import datetime
 import hashlib
 import math
 import re
+import os
 from pathlib import Path
+
+
+def _normalize_path_arg(p: str | None) -> str | None:
+    """Normalize CLI path arguments so both Windows and Unix styles work.
+
+    - strips surrounding quotes
+    - replaces backslashes with forward slashes
+    - collapses duplicate slashes
+    - preserves drive letters (e.g. C:/)
+    Returns None if input is None.
+    """
+    if p is None:
+        return None
+    s = str(p).strip()
+    # drop surrounding quotes if present
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1].strip()
+    # Normalize Windows backslashes to forward slashes
+    s = s.replace('\\', '/')
+    # Collapse repeated slashes
+    s = re.sub(r'/+', '/', s)
+    return s
 
 # ─────────────────────────────────────────────
 # DEFAULT CONFIGURATION
@@ -663,9 +686,12 @@ def main():
     
     from filters.root_detector import detect_project_root
     
-    start_dir = Path(args.project_dir).resolve()
+    # Normalize incoming path arguments to accept Windows and Unix styles
+    start_path_str = _normalize_path_arg(args.project_dir)
+    start_dir = Path(start_path_str).expanduser()
+
     detected_root = Path(detect_project_root(str(start_dir)))
-    
+
     if detected_root != start_dir:
         print(f"[ctxpack] Info: Adjusted project root from '{start_dir}' to detected root '{detected_root}'")
         project_dir = detected_root
@@ -711,9 +737,10 @@ def main():
                          RelationFinder, TagParser, SymbolExtractor]:
             Analyzer(project_dir, args).populate(ctx)
 
-        no_path = args.no_output or str(
-            project_dir / f"{ctx.project.name}.sem.ctx.md"
-        )
+        if args.no_output:
+            no_path = Path(_normalize_path_arg(args.no_output))
+        else:
+            no_path = project_dir / f"{ctx.project.name}.sem.ctx.md"
         
         no_content = build_dsl(ctx)
         
@@ -740,10 +767,13 @@ def main():
     # Determine tokens output path (default: only if chunk/embed is true or output explicitly given)
     tokens_output = None
     if args.output:
-        out = Path(args.output)
+        out = Path(_normalize_path_arg(args.output))
         if out.suffix == "":
             out = out.with_suffix(".md")
-        tokens_output = out.resolve()
+        try:
+            tokens_output = out.resolve()
+        except Exception:
+            tokens_output = out
     elif args.chunk or args.embed:
         tokens_output = Path.cwd() / f"{project_dir.name}.tokens.ctx.md"
 
@@ -751,10 +781,13 @@ def main():
     generate_readable = bool(args.readable)
     if generate_readable:
         if args.readable_output:
-            ro = Path(args.readable_output)
+            ro = Path(_normalize_path_arg(args.readable_output))
             if ro.suffix == "":
                 ro = ro.with_suffix(".md")
-            readable_output = ro.resolve()
+            try:
+                readable_output = ro.resolve()
+            except Exception:
+                readable_output = ro
         else:
             readable_output = Path.cwd() / f"{project_dir.name}.ctx.md"
     else:

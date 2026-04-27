@@ -1,5 +1,7 @@
 # CtxPack: Project Context Packer
 
+- Português (pt-BR): [README.pt-BR.md](README.pt-BR.md)
+
 `ctxpack.py` is a Python script that collapses an entire project's source code and structure into a single, LLM-friendly text file. This allows you to easily paste the entire context of a project into a large context window of a language model or agent.
 
 ## Features
@@ -68,6 +70,18 @@ semantic DSL output:
 python ctxpack.py --setup
 ```
 
+**Path formats**
+
+CtxPack accepts both Unix and Windows path styles. Examples that work on either platform:
+
+- Current directory: `.`
+- Relative path: `../myproject`
+- Unix absolute: `/home/user/projects/myproj`
+- Windows absolute (forward slashes): `C:/Users/You/Projects/MyProj`
+- Windows absolute (backslashes): `C:\\Users\\You\\Projects\\MyProj`
+
+---
+
 **Pack the current directory:**
 ```bash
 python ctxpack.py .
@@ -81,6 +95,11 @@ python ctxpack.py ./AlmaOS -o AlmaOS_context.md
 **Pack a project with specific file extensions and strip comments:**
 ```bash
 python ctxpack.py ./MyProject -e c h asm --strip-comments
+```
+
+**Pack a Windows-style path (example):**
+```bash
+python ctxpack.py "C:\\Users\\You\\Projects\\MyProject" -o MyProject_context.md
 ```
 
 **Pack a graphics project, limiting file size and specifying an output file:**
