@@ -1,32 +1,39 @@
 #!/usr/bin/env python3
 """
 ctxpack.py — Context Packer for LLM/Agent consumption
-Collapses an entire project into a single .ctx.md file.
+Collapses an entire project into single or multiple .ctx.md files.
 
-Usage:
-    python ctxpack.py [project_dir] [options]
+positional arguments:
+  project_dir           Root directory of the project (e.g. . for current dir)
 
-Options:
-    -o, --output FILE       Output file path (default: <project_name>.ctx.md)
-    -e, --ext EXT [EXT...]  Whitelist of extensions (e.g. -e c h py asm)
-    -x, --exclude DIR [..]  Extra dirs to exclude beyond .packignore
-    --setup                 Generate a .packignore template in current dir
-    --strip-comments        Strip single-line comments (// and #)
-    --no-tree               Omit directory tree
-    --max-lines N           Chunking/embedding options  Skip files longer than N lines (default: 2000)
-    --summary               Print token estimate summary only (no file written)
-    --chunk                 Enable line-based chunking of files
-    --chunk-size N          Lines per chunk when --chunk is enabled (default: 200)
-    --chunk-overlap N       Overlap lines between chunks (default: 20)
-    --embed                 Compute deterministic embeddings for each chunk
-    --embed-dim N           Embedding vector dimension when --embed is enabled (default: 512)
-    --readable              Also generate a human-readable full context file (disabled by default)
-    --readable-output FILE  Path for human-readable output (default: <project_name>.ctx.md)
-    --semantic              Generate .sem.ctx.md with semantic DSL output (default: enabled)
-    --no-semantic           Disable generation of .sem.ctx.md with semantic DSL output
-    --semantic-only         Generate only the .sem.ctx.md, omit the standard .ctx.md
-    --now TEXT              Manually set the NOW field (current project focus)
-    --no-output FILE        Path for semantic output file (default: <project_name>.sem.ctx.md)
+options:
+  -h, --help            show this help message and exit
+  -o, --output OUTPUT   Output file path for tokens output (default: 
+                        <project_name>.tokens.ctx.md if chunk/embed enabled)
+  -e, --ext EXT [EXT ...]
+                        Whitelist of file extensions (without dot)
+  -x, --exclude NAME [NAME ...]
+                        Additional directory or file names to exclude
+  --setup               Generate a .packignore template in the current directory and exit
+  --strip-comments      Strip single-line comments (// and #) from source files
+  --no-tree             Omit the directory tree section from the output
+  --max-lines N         Skip files with more than N lines (default: 2000)
+  --summary             Print token/file summary only — do not write output file
+  --chunk               Split files into line-based chunks for indexing
+  --chunk-size N        Lines per chunk when --chunk is enabled (default: 200)
+  --chunk-overlap N     Overlap lines between consecutive chunks (default: 20)
+  --embed               Compute deterministic embeddings for each chunk
+  --embed-dim N         Embedding vector dimension when --embed is enabled (default: 64)
+  --readable            Generate a human-readable full context file (disabled by default)
+  --readable-output FILE
+                        Path for the human-readable output file (default: <project_name>.ctx.md)
+
+semantic DSL output:
+  --semantic         Generate .sem.ctx.md with semantic DSL output (enabled by default)
+  --no-semantic         Disable generation of .sem.ctx.md with semantic DSL output
+  --semantic-only    Generate only the .sem.ctx.md file and exit
+  --now TEXT            Manually set the NOW field (current project focus)
+  --no-output FILE      Path for the semantic DSL file (default: <project_name>.sem.ctx.md)
 
 Examples:
     python ctxpack.py --setup  # Generate a .packignore template in current dir
@@ -42,9 +49,22 @@ import datetime
 import hashlib
 import math
 import re
-import os
+import subprocess
+import threading
 from pathlib import Path
 
+def _color_text(text: str, color: str) -> str:
+    """Utility to color text for terminal output."""
+    colors = {
+        "red": "\033[31m",
+        "green": "\033[32m",
+        "yellow": "\033[33m",
+        "blue": "\033[34m",
+        "magenta": "\033[35m",
+        "cyan": "\033[36m",
+        "reset": "\033[0m",
+    }
+    return f"{colors.get(color, '')}{text}{colors['reset']}"
 
 def _normalize_path_arg(p: str | None) -> str | None:
     """Normalize CLI path arguments so both Windows and Unix styles work.
@@ -97,6 +117,9 @@ DEFAULT_EXTENSIONS = {
     "sh", "bash",
 }
 
+# Default remote repository used by the --update command
+DEFAULT_REMOTE_URL = "git@github.com:Gabryel-lima/CtxPack.git"
+
 # Always ignored directories regardless of .packignore
 HARDCODED_IGNORE_DIRS = {
     ".git", ".svn", ".hg",
@@ -133,7 +156,7 @@ def generate_packignore_template(project_dir: Path = Path.cwd()) -> None:
 
     # If .packignore already exists, do nothing
     if packignore.exists():
-        print(f"[ctxpack] .packignore already exists at {packignore.resolve()}")
+        print(_color_text(f"[ctxpack] .packignore already exists at {packignore.resolve()}", "yellow"))
         return
 
     # Default template content to use when no template exists
@@ -150,14 +173,14 @@ def generate_packignore_template(project_dir: Path = Path.cwd()) -> None:
         # Ensure a template exists; create one from defaults if missing
         if not pack_template.exists():
             pack_template.write_text(default_template, encoding="utf-8")
-            print(f"[ctxpack] Created template at {pack_template.resolve()}")
+            print(_color_text(f"[ctxpack] Created template at {pack_template.resolve()}", "green"))
 
         # Copy template contents into .packignore
         content = pack_template.read_text(encoding="utf-8")
         packignore.write_text(content, encoding="utf-8")
-        print(f"[ctxpack] Generated .packignore from template at {packignore.resolve()}")
+        print(_color_text(f"[ctxpack] Generated .packignore from template at {packignore.resolve()}", "green"))
     except Exception as e:
-        print(f"[ctxpack] ERROR generating .packignore: {e}", file=sys.stderr)
+        print(_color_text(f"[ctxpack] ERROR generating .packignore: {e}", "red"), file=sys.stderr)
 
 def load_packignore(project_dir: Path) -> list[str]:
     """Load .packignore patterns from project root."""
@@ -408,12 +431,12 @@ def build_pack(
     """
     ignore_patterns = load_packignore(project_dir)
 
-    print(f"[ctxpack] Project:      {project_dir.resolve()}")
-    print(f"[ctxpack] Extensions:   {', '.join(sorted(allowed_extensions))}")
-    print(f"[ctxpack] Packignore:   {len(ignore_patterns)} pattern(s) loaded")
-    print(f"[ctxpack] Strip cmts:   {strip_comments}")
-    print(f"[ctxpack] Chunking:     {use_chunking} (size={chunk_size}, overlap={chunk_overlap})")
-    print(f"[ctxpack] Embeddings:   {do_embed} (dim={embed_dim})")
+    print(_color_text(f"[ctxpack] Project:      {project_dir.resolve()}", "cyan"))
+    print(_color_text(f"[ctxpack] Extensions:   {', '.join(sorted(allowed_extensions))}", "cyan"))
+    print(_color_text(f"[ctxpack] Packignore:   {len(ignore_patterns)} pattern(s) loaded", "cyan"))
+    print(_color_text(f"[ctxpack] Strip cmts:   {strip_comments}", "cyan"))
+    print(_color_text(f"[ctxpack] Chunking:     {use_chunking} (size={chunk_size}, overlap={chunk_overlap})", "cyan"))
+    print(_color_text(f"[ctxpack] Embeddings:   {do_embed} (dim={embed_dim})", "cyan"))
 
     tree_str, files = build_tree(
         project_dir, ignore_patterns, allowed_extensions, extra_ignore, max_lines
@@ -527,25 +550,23 @@ def build_pack(
     token_estimate = estimate_tokens(readable_content if readable_output_path else tokens_content)
     
     if summary_only:
-        print(f"[ctxpack] Files:           {len(files)}")
-        print(f"[ctxpack] Total lines:     {total_lines:,}")
-        print(f"[ctxpack] Estimated tokens: ~{token_estimate:,}")
+        print(_color_text(f"[ctxpack] Files:           {len(files)}", "cyan"))
+        print(_color_text(f"[ctxpack] Total lines:     {total_lines:,}", "cyan"))
+        print(_color_text(f"[ctxpack] Estimated tokens: ~{token_estimate:,}", "yellow"))
         output_size = len(readable_output or tokens_output or "") // 1024
-        print(f"[ctxpack] Output size: ~{output_size} KB")
+        print(_color_text(f"[ctxpack] Output size: ~{output_size} KB", "cyan"))
         return
 
     # write tokens file if requested
     if tokens_output_path is not None and tokens_output is not None:
         tokens_output_path.write_text(tokens_output, encoding="utf-8")
-        print(f"[ctxpack] Tokens output written:  {tokens_output_path.resolve()}")
+        print(_color_text(f"[ctxpack] Tokens output written:  {tokens_output_path.resolve()}", "green"))
 
 
     # optionally write readable file
     if readable_output_path is not None and readable_output is not None:
         readable_output_path.write_text(readable_output, encoding="utf-8")
-        print(f"[ctxpack] Readable output written: {readable_output_path.resolve()}")
-
-
+        print(_color_text(f"[ctxpack] Readable output written: {readable_output_path.resolve()}", "green"))
 
 # ─────────────────────────────────────────────
 # CLI ENTRYPOINT
@@ -559,7 +580,9 @@ def main():
     )
     parser.add_argument(
         "project_dir",
-        help="Root directory of the project (e.g. . for current dir or ../path)",
+        nargs='?',
+        default=None,
+        help="Root directory of the project (e.g. ./path or ../path). REQUIRED: pass a path",
     )
     parser.add_argument(
         "-o", "--output",
@@ -644,7 +667,21 @@ def main():
         default=None,
         help="Path for the human-readable output file (default: <project_name>.ctx.md).",
     )
-
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help=("Fetch and apply updates from the canonical repository "
+              "(git@github.com:Gabryel-lima/CtxPack.git). Use to update this installation."),
+    )
+    parser.add_argument(
+        "--remote-url",
+        default=None,
+        help="Optional: override remote repository URL used by --update.",
+    )
+    """Note: --update and --remote-url are related: --update triggers 
+       the update process, and --remote-url allows specifying a custom 
+       repository URL for that process. If --remote-url is not provided, 
+       it defaults to the canonical repository URL."""
     no_group = parser.add_argument_group("semantic DSL output")
     no_group.add_argument(
         "--semantic",
@@ -657,6 +694,8 @@ def main():
         dest="semantic",
         help="Disable generation of .sem.ctx.md with semantic DSL output"
     )
+    """Note: --semantic and --no-semantic are mutually exclusive 
+       flags that set the same 'semantic' variable to True or False."""
     parser.set_defaults(semantic=True)
 
     no_group.add_argument(
@@ -679,6 +718,113 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Require the user to pass a project directory explicitly. If omitted,
+    # show help and exit with an error status to avoid assuming current dir.
+    if args.project_dir is None:
+        print(_color_text("[ctxpack] ERROR: project_dir is required. See usage below:", "red"), file=sys.stderr)
+        parser.print_help()
+        sys.exit(2)
+
+    # Determine the directory where this script lives (the installation dir)
+    ctxpack_dir = Path(__file__).resolve().parent
+
+    # --- Git update support -------------------------------------------------
+    def is_git_repo(path: Path) -> bool:
+        try:
+            res = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=str(path), capture_output=True, text=True)
+            return res.returncode == 0 and res.stdout.strip() == "true"
+        except Exception:
+            return False
+
+    def get_local_head(path: Path) -> str | None:
+        try:
+            res = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(path), capture_output=True, text=True)
+            if res.returncode == 0:
+                return res.stdout.strip()
+        except Exception:
+            pass
+        return None
+
+    def get_remote_head(remote_url: str) -> str | None:
+        try:
+            res = subprocess.run(["git", "ls-remote", remote_url, "HEAD"], capture_output=True, text=True, timeout=15)
+            if res.returncode == 0 and res.stdout:
+                return res.stdout.split()[0].strip()
+        except Exception:
+            pass
+        return None
+
+    def notify_update_available_async(repo_dir: Path, remote_url: str = DEFAULT_REMOTE_URL) -> None:
+        def _check():
+            try:
+                if not is_git_repo(repo_dir):
+                    return
+                local = get_local_head(repo_dir)
+                remote = get_remote_head(remote_url)
+                if local and remote and local != remote:
+                    print(_color_text(f"[ctxpack] Update available: local {local[:7]} != remote {remote[:7]}", "yellow"))
+                    print(_color_text(f"[ctxpack] Run: python {Path(__file__).name} --update to apply updates.", "cyan"))
+            except Exception:
+                pass
+        t = threading.Thread(target=_check, daemon=True)
+        t.start()
+
+    def perform_update(repo_dir: Path, remote_url: str = DEFAULT_REMOTE_URL) -> int:
+        if not is_git_repo(repo_dir):
+            print(_color_text(f"[ctxpack] ERROR: {repo_dir} is not a git repository. Cannot update.", "red"), file=sys.stderr)
+            return 2
+
+        try:
+            rem_res = subprocess.run(["git", "remote"], cwd=str(repo_dir), capture_output=True, text=True)
+            remotes = rem_res.stdout.split()
+            if "origin" not in remotes:
+                add = subprocess.run(["git", "remote", "add", "origin", remote_url], cwd=str(repo_dir))
+                if add.returncode != 0:
+                    print(_color_text(f"[ctxpack] ERROR adding origin remote {remote_url}", "red"))
+                    return 3
+            else:
+                subprocess.run(["git", "remote", "set-url", "origin", remote_url], cwd=str(repo_dir))
+
+            print(_color_text(f"[ctxpack] Fetching updates from {remote_url}...", "cyan"))
+            fetch = subprocess.run(["git", "fetch", "origin"], cwd=str(repo_dir))
+            if fetch.returncode != 0:
+                print(_color_text("[ctxpack] ERROR: git fetch failed.", "red"))
+                return 4
+
+            # Resolve default branch from origin/HEAD
+            try:
+                ref = subprocess.run(["git", "symbolic-ref", "refs/remotes/origin/HEAD"], cwd=str(repo_dir), capture_output=True, text=True)
+                if ref.returncode == 0 and ref.stdout:
+                    out = ref.stdout.strip()
+                    branch = out.split("/", 3)[-1]
+                else:
+                    branch = "main"
+            except Exception:
+                branch = "main"
+
+            print(_color_text(f"[ctxpack] Attempting fast-forward pull from origin/{branch}...", "cyan"))
+            pull = subprocess.run(["git", "pull", "--ff-only", "origin", branch], cwd=str(repo_dir))
+            if pull.returncode == 0:
+                print(_color_text("[ctxpack] Update applied successfully.", "green"))
+                return 0
+            else:
+                print(_color_text("[ctxpack] git pull failed (non fast-forward or other error). Please run 'git pull' manually in the installation directory.", "yellow"))
+                return 5
+
+        except Exception as e:
+            print(_color_text(f"[ctxpack] ERROR during update: {e}", "red"), file=sys.stderr)
+            return 10
+
+    # Start a background check to notify user if an update exists (non-blocking)
+    # Use provided remote-url if present
+    chosen_remote = args.remote_url if args.remote_url else DEFAULT_REMOTE_URL
+    notify_update_available_async(Path(__file__).resolve().parent, chosen_remote)
+
+    # If user requested an update, perform it and exit
+    if args.update:
+        code = perform_update(Path(__file__).resolve().parent, chosen_remote)
+        sys.exit(code)
 
     if args.setup:
         generate_packignore_template()
@@ -757,7 +903,7 @@ def main():
         no_content += footer
 
         Path(no_path).write_text(no_content, encoding="utf-8")
-        print(f"[ctxpack] Semantic DSL written to: {no_path}")
+        print(_color_text(f"[ctxpack] Semantic DSL written to: {no_path}", "green"))
 
     if args.semantic_only:
         sys.exit(0)
@@ -813,7 +959,6 @@ def main():
         do_embed=args.embed,
         embed_dim=args.embed_dim,
     )
-
 
 if __name__ == "__main__":
     main()

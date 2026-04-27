@@ -105,6 +105,23 @@ python ctxpack.py "C:\\Users\\You\\Projects\\MyProject" -o MyProject_context.md
 python ctxpack.py ./gfx -e c h --max-lines 500 -o gfx_context.ctx.md
 ```
 
+## Atualizar o próprio script
+
+O CtxPack pode verificar o repositório canônico por atualizações e aplicá-las na instalação local.
+
+- **Verificação automática:** Quando você executa `ctxpack.py`, ele fará uma checagem leve em segundo plano e mostrará um aviso curto se houver um commit mais recente no repositório canônico.
+- **Aplicar atualizações:** Rode o comando de atualização para buscar e aplicar mudanças na sua cópia local:
+
+```bash
+python ctxpack.py --update
+```
+
+Se a sua instalação usa uma URL remota diferente, você pode sobrescrevê-la com `--remote-url`:
+
+```bash
+python ctxpack.py --update --remote-url git@github.com:seu/repo.git
+```
+
 ## Como Funciona
 
 O script percorre o diretório do projeto, filtra arquivos com base nos seus critérios e concatena-os em um único arquivo Markdown. O conteúdo de cada arquivo é colocado dentro de um bloco de código cercado por fences, tornando-o fácil de ser analisado por modelos de linguagem.
