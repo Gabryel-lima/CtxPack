@@ -101,8 +101,14 @@ DEFAULT_EXTENSIONS = {
     "py",
     # Rust
     "rs",
+    # Go
+    "go",
     # JavaScript / TypeScript
-    "js", "ts", "jsx", "tsx",
+    "js", "mjs", "ts", "jsx", "tsx",
+    # PHP / Ruby / Lua
+    "php", "rb", "lua",
+    # C# / Swift / Dart
+    "cs", "swift", "dart",
     # Web
     "html", "css", "scss",
     # Config / Build
@@ -305,6 +311,7 @@ def build_tree(
             e for e in entries
             if not should_ignore_path(e, project_dir, ignore_patterns)
             and e.name not in extra_ignore
+            and e.relative_to(project_dir).as_posix() not in extra_ignore
             and not exclusion_filter.is_excluded(str(e.relative_to(project_dir)))
         ]
 
@@ -836,13 +843,16 @@ def main():
     start_path_str = _normalize_path_arg(args.project_dir)
     start_dir = Path(start_path_str).expanduser()
 
-    detected_root = Path(detect_project_root(str(start_dir)))
-
-    if detected_root != start_dir:
-        print(f"[ctxpack] Info: Adjusted project root from '{start_dir}' to detected root '{detected_root}'")
-        project_dir = detected_root
+    should_detect_root = str(args.project_dir).strip() in {".", "./", "..", "../"}
+    if should_detect_root:
+        detected_root = Path(detect_project_root(str(start_dir)))
+        if detected_root != start_dir:
+            print(f"[ctxpack] Info: Adjusted project root from '{start_dir}' to detected root '{detected_root}'")
+            project_dir = detected_root
+        else:
+            project_dir = start_dir
     else:
-        project_dir = start_dir
+        project_dir = start_dir.resolve()
 
     if not project_dir.is_dir():
         print(f"[ctxpack] ERROR: '{project_dir}' is not a valid directory.", file=sys.stderr)
@@ -850,6 +860,17 @@ def main():
 
     allowed_ext = set(args.ext) if args.ext else DEFAULT_EXTENSIONS
     extra_ignore = set(args.exclude)
+
+    semantic_output_path = Path(_normalize_path_arg(args.no_output)) if args.no_output else project_dir / f"{project_dir.name}.sem.ctx.md"
+    try:
+        semantic_output_path = semantic_output_path.resolve()
+    except Exception:
+        pass
+    try:
+        if semantic_output_path.is_relative_to(project_dir.resolve()):
+            extra_ignore.add(semantic_output_path.relative_to(project_dir.resolve()).as_posix())
+    except Exception:
+        pass
 
     # Exclude ctxpack.py itself if it's inside the project directory (common when running from project root)
     ctxpack_dir = Path(__file__).resolve().parent
@@ -880,7 +901,7 @@ def main():
             ctx.now = args.now
 
         for Analyzer in [LangDetector, DepExtractor, ModuleMapper,
-                         RelationFinder, TagParser, SymbolExtractor]:
+                 RelationFinder, SymbolExtractor, TagParser]:
             Analyzer(project_dir, args).populate(ctx)
 
         if args.no_output:

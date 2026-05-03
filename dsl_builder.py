@@ -1,9 +1,9 @@
 from dsl_schema import DSLContext
 
 HEADER_INSTRUCTION = (
-    "<!-- DSL SEMÂNTICA: PRJ=projeto, DEP=dependências, MOD=módulo, "
-    "REL=relação entre módulos, CONV=convenções, DEC=decisão de design, "
-    "BUG=problema conhecido, NOW=foco atual, CTX=contexto extra -->\n"
+    "<!-- DSL SEMANTIC: PRJ=project, DEP=dependencies, MOD=module, "
+    "REL=module relations, CONV=conventions, DEC=design decisions, "
+    "BUG=known issues, NOW=current focus, CTX=extra context -->\n"
 )
 
 def build_dsl(ctx: DSLContext) -> str:

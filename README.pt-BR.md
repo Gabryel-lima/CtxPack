@@ -5,60 +5,83 @@
 ## Recursos
 
 - **Múltiplos Formatos**: Cria diferentes perfis (Semantic DSL por padrão `.sem.ctx.md`, Legível por Humanos `.ctx.md` com `--readable`, e arquivos de Token/Chunk `.tokens.ctx.md`).
-- **Modo Semantic DSL**: AST semântico avançado e indexação de imports do seu projeto prontos para uso, com inferência heurística inteligente (estado, papel, convenções).
+- **Modo Semantic DSL**: Extração semântica estrutural com analisadores em Python puro, indexação de imports/relações e inferência inteligente de estado, papel, convenções e contexto quando faltam metadados explícitos.
 - **Árvore de Diretório**: Inclui uma árvore de diretórios ASCII para facilitar a navegação.
 - **Filtragem & Exclusão Inteligentes**: Detecção automática da raiz e exclusões de categorias configuráveis (build, vendor, test, doc, etc.). Whitelist de extensões e exclusão de diretórios/arquivos específicos.
 - **Remoção de Comentários**: Opção para remover comentários de linha única para economizar tokens.
 - **Limites de Tamanho de Arquivo**: Ignora arquivos que sejam muito grandes.
 - **Estimativa de Tokens**: Fornece uma estimativa aproximada da contagem de tokens.
+- **Extração Polyglot**: Suporte semântico embutido para Python, JavaScript, TypeScript, Rust, Go, Java, Kotlin, C, C++, C#, PHP, Ruby, Lua, Swift, Dart, Shell e mais via plugins.
+- **Fallback para Metadados**: Se tags como `@role`, `@state` ou `@ctx` não existirem, o CtxPack infere contexto útil a partir de comentários, símbolos, nomes de arquivo e estrutura do código.
 
 ## Uso
 
 ```text
 uso: ctxpack.py [-h] [-o OUTPUT] [-e EXT [EXT ...]] [-x NAME [NAME ...]]
                   [--setup] [--strip-comments] [--no-tree]
-                  [--max-lines N] [--summary] [--chunk]
-                  [--chunk-size N] [--chunk-overlap N]
-                  [--embed] [--embed-dim N] [--readable]
-                  [--readable-output FILE] [--no-semantic]
-                  [--no-semantic] [--no-semantic-only] [--now TEXT]
-                  [--no-output FILE]
-                  project_dir
+                  [--max-lines MAX_LINES] [--summary] [--chunk]
+                  [--chunk-size CHUNK_SIZE] [--chunk-overlap CHUNK_OVERLAP]
+                  [--embed] [--embed-dim EMBED_DIM] [--readable]
+                  [--readable-output READABLE_OUTPUT] [--update]
+                  [--remote-url REMOTE_URL] [--semantic] [--no-semantic]
+                  [--semantic-only] [--now TEXT] [--no-output FILE]
+                  [project_dir]
 
-ctxpack.py — Empacotador de Contexto para consumo por LLM/Agentes
-Colapsa um projeto inteiro em um único ou em múltiplos arquivos .ctx.md.
+ctxpack — Colapsa um projeto em um arquivo de contexto pronto para LLM.
 
 argumentos posicionais:
-  project_dir           Diretório raiz do projeto (ex.: . para o diretório atual)
+  project_dir           Diretório raiz do projeto (ex.: ./path ou
+                        ../path). O caminho deve ser informado.
 
 opções:
   -h, --help            mostrar esta mensagem de ajuda e sair
-  -o, --output OUTPUT   Caminho do arquivo de saída para a saída de tokens (padrão:
-                        <project_name>.tokens.ctx.md se chunk/embed estiver habilitado)
-  -e, --ext EXT [EXT ...]
-                        Lista branca de extensões de arquivo (sem ponto)
-  -x, --exclude NAME [NAME ...]
-                        Nomes adicionais de diretórios ou arquivos a excluir
-  --setup               Gerar um template .packignore no diretório atual e sair
-  --strip-comments      Remover comentários de linha única (// e #) de arquivos fonte
-  --no-tree             Omitir a seção de árvore de diretórios no arquivo de saída
-  --max-lines N         Ignorar arquivos com mais de N linhas (padrão: 2000)
-  --summary             Imprimir apenas o resumo de tokens/arquivos — não escrever o arquivo de saída
-  --chunk               Dividir arquivos em trechos (chunks) por linhas para indexação
-  --chunk-size N        Linhas por trecho quando --chunk estiver habilitado (padrão: 200)
-  --chunk-overlap N     Linhas de sobreposição entre trechos consecutivos (padrão: 20)
-  --embed               Calcular embeddings determinísticos para cada trecho
-  --embed-dim N         Dimensão do vetor de embedding quando --embed estiver habilitado (padrão: 64)
-  --readable            Gerar um arquivo de contexto completo legível por humanos (desativado por padrão)
-  --readable-output FILE
-                        Caminho para o arquivo de saída legível (padrão: <project_name>.ctx.md)
+  -o OUTPUT, --output OUTPUT
+                        Caminho do arquivo de saída para tokens (padrão:
+                        <project_name>.tokens.ctx.md se --chunk/--embed
+                        estiver habilitado)
+  -e EXT [EXT ...], --ext EXT [EXT ...]
+                        Lista branca de extensões (sem ponto). Se omitida,
+                        usa o conjunto padrão embutido.
+  -x NAME [NAME ...], --exclude NAME [NAME ...]
+                        Nomes adicionais de arquivos ou diretórios a excluir.
+  --setup               Gera um template .packignore no diretório atual e sai.
+  --strip-comments      Remove comentários de linha única (// e #) dos arquivos
+                        fonte.
+  --no-tree             Omite a seção de árvore de diretórios na saída.
+  --max-lines MAX_LINES
+                        Ignora arquivos com mais de N linhas (padrão: 2000).
+  --summary             Imprime apenas o resumo de arquivos/tokens e não grava
+                        o arquivo de saída.
+  --chunk               Divide arquivos em chunks por linhas para indexação.
+  --chunk-size CHUNK_SIZE
+                        Linhas por chunk quando --chunk estiver habilitado
+                        (padrão: 200).
+  --chunk-overlap CHUNK_OVERLAP
+                        Sobreposição de linhas entre chunks consecutivos
+                        (padrão: 20).
+  --embed               Calcula embeddings determinísticos para cada chunk
+                        usando Python puro.
+  --embed-dim EMBED_DIM
+                        Dimensão do vetor de embedding quando --embed estiver
+                        habilitado (padrão: 64).
+  --readable            Também gera um arquivo completo legível por humanos
+                        (desabilitado por padrão).
+  --readable-output READABLE_OUTPUT
+                        Caminho do arquivo legível (padrão:
+                        <project_name>.ctx.md).
+  --update              Busca e aplica atualizações do repositório canônico
+                        (git@github.com:Gabryel-lima/CtxPack.git).
+  --remote-url REMOTE_URL
+                        Sobrescreve a URL remota usada por --update.
 
-Saída do DSL semântico:
-  --semantic            Gerar .sem.ctx.md com saída em DSL semântico (ativado por padrão)
-  --no-semantic         Desabilitar a geração de .sem.ctx.md com saída em DSL semântico
-  --semantic-only       Gerar apenas o arquivo .sem.ctx.md e sair
-  --now TEXT            Definir manualmente o campo NOW (foco atual do projeto)
-  --no-output FILE      Caminho para o arquivo DSL semântico (padrão: <project_name>.sem.ctx.md)
+saída do DSL semântico:
+  --semantic            Gera .sem.ctx.md com a saída semântica
+                        (habilitado por padrão)
+  --no-semantic         Desabilita a geração do .sem.ctx.md
+  --semantic-only       Gera apenas o .sem.ctx.md, omitindo o .ctx.md padrão
+  --now TEXT            Define manualmente o campo NOW (foco atual do projeto)
+  --no-output FILE      Caminho para o arquivo semântico (padrão:
+                        <project_name>.sem.ctx.md)
 ```
 
 ## Exemplos
@@ -105,6 +128,16 @@ python ctxpack.py "C:\\Users\\You\\Projects\\MyProject" -o MyProject_context.md
 python ctxpack.py ./gfx -e c h --max-lines 500 -o gfx_context.ctx.md
 ```
 
+**Rode os fixtures polyglot embutidos:**
+```bash
+python3 ctxpack.py tests/prototypes --semantic-only --no-output tests/prototypes/prototypes.sem.ctx.md
+```
+
+**Rode a suíte completa de smoke tests:**
+```bash
+python3 tests/run_smoke.py
+```
+
 ## Atualizar o próprio script
 
 O CtxPack pode verificar o repositório canônico por atualizações e aplicá-las na instalação local.
@@ -126,6 +159,32 @@ python ctxpack.py --update --remote-url git@github.com:seu/repo.git
 
 O script percorre o diretório do projeto, filtra arquivos com base nos seus critérios e concatena-os em um único arquivo Markdown. O conteúdo de cada arquivo é colocado dentro de um bloco de código cercado por fences, tornando-o fácil de ser analisado por modelos de linguagem.
 
+Na saída semântica, o CtxPack combina múltiplos analisadores: detecção de linguagem, extração de dependências, mapeamento de módulos, inferência de relações, extração de símbolos e enriquecimento de metadados/contexto. Quando tags explícitas não existem, ele deriva contexto a partir de comentários iniciais, estrutura de símbolos, nomes de arquivo e heurísticas do projeto.
+
+## Extração Semântica Embutida
+
+O CtxPack já vem com duas estratégias de extração:
+
+- `analyzers/plugins/python_plugin.py`: usa o `ast` embutido do Python para extrair funções, classes e métodos Python com precisão.
+- `analyzers/plugins/polyglot_plugin.py`: usa um parser estrutural em Python puro para cobrir várias linguagens sem dependências externas.
+
+O extrator polyglot embutido cobre atualmente:
+
+- JavaScript / JSX / MJS
+- TypeScript / TSX
+- Rust
+- Go
+- Java
+- Kotlin
+- C / C++
+- C#
+- PHP
+- Ruby
+- Lua
+- Swift
+- Dart
+- Shell (`sh`, `bash`)
+
 ## Sistema de Plugins de Linguagem (Extensibilidade)
 
 O CtxPack agora inclui um sistema de plugins de linguagem para detecção e extração de símbolos. Isso permite adicionar suporte a novas linguagens de programação sem modificar o código principal.
@@ -136,7 +195,10 @@ O CtxPack agora inclui um sistema de plugins de linguagem para detecção e extr
   - `detect(content: str, path: Path) -> float`: pontuação heurística opcional (0.0-1.0) para desambiguação.
   - `extract_symbols(module, project_dir: Path) -> None`: popula `module.symbols` com entradas `SymbolNode`.
 
-Exemplo: `analyzers/plugins/python_plugin.py` está incluído como implementação de referência que usa o `ast` do Python para extrair funções, classes e métodos.
+Exemplos:
+
+- `analyzers/plugins/python_plugin.py` usa o `ast` embutido do Python para código Python.
+- `analyzers/plugins/polyglot_plugin.py` usa um parser estrutural em Python puro para cobrir várias linguagens não-Python sem dependências externas.
 
 Como a detecção funciona:
 - O `SymbolExtractor` primeiro corresponde plugins pela extensão do arquivo. Se múltiplos plugins registrarem a mesma extensão, ele chama `detect()` em cada um para escolher o plugin com maior pontuação.
@@ -146,9 +208,9 @@ Isso extrai semântica para outras linguagens?
 - Resposta curta: sim — contanto que um plugin implemente a lógica de extração para a linguagem alvo.
 
 Detalhes e limitações:
-- O núcleo fornece apenas a estrutura de plugins e a orquestração (descoberta, registro e seleção). A análise e extração semântica real devem ser implementadas por cada plugin.
-- Para algumas linguagens (Python, Java, JavaScript, Rust, etc.) você pode escrever plugins robustos usando suas bibliotecas de AST/parse. Para outras sem um parser adequado, uma abordagem heurística ou baseada em regex ainda pode extrair símbolos úteis, porém com menos precisão.
-- Desempenho: parsing custoso deve ser implementado com cuidado (streaming, saídas antecipadas), pois o ctxpack é pensado para rodar em máquinas de desenvolvedor.
+- O núcleo fornece a orquestração dos plugins e já inclui extratores Python e polyglot, mas a precisão ainda depende da implementação específica de cada linguagem.
+- O extrator polyglot embutido é intencionalmente dependency-free e usa parsing estrutural com heurísticas, não parsers de compilador completos. Em linguagens muito dinâmicas ou com muitos macros, alguns casos ainda podem ser aproximados.
+- Desempenho: o parsing deve continuar leve, pois o ctxpack é pensado para rodar em máquinas de desenvolvedor.
 - Segurança: o código dos plugins roda no mesmo processo; evite executar código não confiável durante detecção/extração.
 
 Adicionar um novo plugin de linguagem (passos rápidos):
@@ -158,6 +220,16 @@ Adicionar um novo plugin de linguagem (passos rápidos):
 4. Rode `python ctxpack.py <project_dir>` — o plugin será descoberto automaticamente.
 
 Se quiser, posso adicionar templates para plugins C/C++ e Java, ou documentar padrões comuns para construir detectores e parsers robustos.
+
+## Fixtures de Validação
+
+O repositório inclui uma suíte de smoke tests semânticos em `tests/prototypes/`. São arquivos pequenos de várias linguagens usados para validar qualidade de extração e detecção de relações entre módulos.
+
+Comando típico de validação:
+
+```bash
+python3 tests/run_smoke.py
+```
 
 ## Licença
 

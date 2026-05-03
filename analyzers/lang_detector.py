@@ -6,8 +6,12 @@ EXT_TO_LANG = {
     ".cpp": "C++", ".hpp": "C++",
     ".asm": "NASM", ".s": "ASM",
     ".rs": "Rust", ".go": "Go",
-    ".js": "JavaScript", ".ts": "TypeScript",
+    ".js": "JavaScript", ".jsx": "JavaScript", ".mjs": "JavaScript",
+    ".ts": "TypeScript", ".tsx": "TypeScript",
     ".java": "Java", ".kt": "Kotlin",
+    ".cs": "C#", ".swift": "Swift", ".dart": "Dart",
+    ".php": "PHP", ".rb": "Ruby", ".lua": "Lua",
+    ".sh": "Shell", ".bash": "Shell",
 }
 
 class LangDetector:
