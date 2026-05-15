@@ -3,6 +3,12 @@ import * as path from "node:path";
 
 export type CtxChatMode = "ask" | "plan" | "agent";
 
+export interface CtxChatModeResolution {
+  mode: CtxChatMode;
+  rawName?: string;
+  source: "request" | "fallback";
+}
+
 export interface WorkspacePackOptions {
   maxFiles?: number;
   maxFileBytes?: number;
@@ -170,13 +176,118 @@ export function getCtxChatModeLabel(mode: CtxChatMode): string {
 
 export function resolveCtxChatMode(name: string | undefined): CtxChatMode {
   const normalized = (name ?? "").trim().toLowerCase();
-  if (normalized.includes("agent")) {
+  if (normalized.includes("agent") || normalized.includes("agente")) {
     return "agent";
   }
-  if (normalized.includes("plan")) {
+  if (normalized.includes("plan") || normalized.includes("plano")) {
     return "plan";
   }
+
+  if (normalized.includes("ask") || normalized.includes("pergunta") || normalized.includes("question")) {
+    return "ask";
+  }
+
   return "ask";
+}
+
+export function resolveCtxChatModeFromRequest(requestLike: unknown): CtxChatModeResolution {
+  const rawName = extractModeNameFromRequest(requestLike);
+  if (!rawName) {
+    return {
+      mode: "ask",
+      source: "fallback",
+    };
+  }
+
+  return {
+    mode: resolveCtxChatMode(rawName),
+    rawName,
+    source: "request",
+  };
+}
+
+function extractModeNameFromRequest(requestLike: unknown): string | undefined {
+  if (!isRecord(requestLike)) {
+    return undefined;
+  }
+
+  const directCandidates: unknown[] = [
+    readPath(requestLike, ["modeInstructions2", "name"]),
+    readPath(requestLike, ["modeInstructions", "name"]),
+    readPath(requestLike, ["modeInstruction", "name"]),
+    readPath(requestLike, ["mode", "name"]),
+    readPath(requestLike, ["chatMode", "name"]),
+    readPath(requestLike, ["modeName"]),
+    readPath(requestLike, ["mode"]),
+    readPath(requestLike, ["chatMode"]),
+  ];
+
+  for (const candidate of directCandidates) {
+    const text = asNonEmptyString(candidate);
+    if (text) {
+      return text;
+    }
+  }
+
+  const inferredCandidates: unknown[] = [
+    readPath(requestLike, ["modeInstructions2", "content"]),
+    readPath(requestLike, ["modeInstructions", "content"]),
+    readPath(requestLike, ["modeInstructions2"]),
+    readPath(requestLike, ["modeInstructions"]),
+  ];
+
+  for (const candidate of inferredCandidates) {
+    const text = asNonEmptyString(candidate);
+    if (!text) {
+      continue;
+    }
+
+    const inferred = inferModeKeyword(text);
+    if (inferred) {
+      return inferred;
+    }
+  }
+
+  return undefined;
+}
+
+function inferModeKeyword(text: string): string | undefined {
+  const normalized = text.toLowerCase();
+  if (normalized.includes("agent") || normalized.includes("agente")) {
+    return "agent";
+  }
+  if (normalized.includes("plan") || normalized.includes("plano")) {
+    return "plan";
+  }
+  if (normalized.includes("ask") || normalized.includes("pergunta") || normalized.includes("question")) {
+    return "ask";
+  }
+
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function readPath(source: Record<string, unknown>, pathParts: string[]): unknown {
+  let current: unknown = source;
+  for (const part of pathParts) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 export function createPackignoreTemplate(workspaceRoot: string): WorkspacePackResult {

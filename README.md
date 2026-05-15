@@ -160,11 +160,13 @@ Visual flow reference: see the extension guide image in [vscode-extension/README
 
 Important behavior:
 
+- `@ctx` is explicit per message. If you want CtxPack injection again in the next message, type `@ctx` again in that next prompt.
 - `@ctx` does not collect files by itself.
 - `@ctx` injects only what is already in the buffer.
 - The buffer changes only when you push content or remove/clear slots.
-- You can keep `@ctx` fixed on a chosen subset of slots across multiple iterations.
+- If you select active slots, that selected subset becomes the effective context source for Ask, Plan, and Agent.
 - `@ctx` should be used deliberately, not as a prefix for every prompt.
+- Every request now emits a visual injection report (used slots, omitted slots, token estimate) and updates status bar telemetry.
 
 ### When to use `@ctx`
 
@@ -263,7 +265,7 @@ npm install
 npm run compile
 npm test
 npm run package
-code --install-extension ctxpack-context-0.1.3.vsix
+code --install-extension ctxpack-context-0.1.7.vsix
 ```
 
 You can also install via VS Code UI: Extensions -> `...` -> Install from VSIX...
@@ -280,7 +282,7 @@ Use VS Code extension development host:
 ### FAQ (common questions)
 
 1. Do I need to start every prompt with `@ctx`?
-  No. Use `@ctx` only for prompts that should receive buffered context.
+  Yes, when you want CtxPack injection in that specific prompt. If the next prompt should also use CtxPack, type `@ctx` again.
 2. Does the buffer update itself every prompt?
   No. You must push new content (command or CLI) when files change.
 3. Is buffer data persisted forever?
@@ -292,7 +294,10 @@ Use VS Code extension development host:
 6. How do I export context for another LLM instead of Copilot Chat?
   Run `CtxPack: Generate semantic project pack` or `CtxPack: Generate readable project pack`.
 7. How do I make the AI reuse only one file, one directory, or a specific group of slots on every iteration?
-  Push that content and then run `CtxPack: Choose active slots for @ctx`.
+  Push that content and then run `CtxPack: Choose active slots for @ctx`. Active slots are applied as the effective scope across Ask, Plan, and Agent.
+
+8. What if chat stays in `Evaluating` for too long?
+  The participant now has a defensive timeout and should return an explicit error instead of waiting indefinitely.
 
 ## Self-updating the script
 

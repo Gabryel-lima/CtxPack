@@ -2,7 +2,7 @@
   "name": "ctxpack",
   "displayName": "CtxPack",
   "description": "FIFO context buffer for Copilot Chat in VS Code",
-  "version": "0.1.6",
+  "version": "0.1.8",
   "publisher": "Gabryel-lima",
   "icon": "assets/ctxpack.png",
   "license": "MIT",
@@ -127,7 +127,7 @@
         "id": "ctxpack.assistant",
         "name": "ctx",
         "description": "Copilot with accumulated CtxPack context",
-        "isSticky": true
+        "isSticky": false
       }
     ],
     "keybindings": [

@@ -80,6 +80,46 @@ export class ContextRingBuffer {
    */
   public buildPromptContext(mode: ChatModeKey = "ask", maxTokensBudget = this.maxTokens): PromptContextPayload {
     const slots = this.getSlotsForChat(mode);
+    return this.buildPromptContextFromSlots(slots, maxTokensBudget);
+  }
+
+  /**
+   * Builds a prompt-oriented payload from an explicit tag subset.
+   */
+  public buildPromptContextForTags(tags: string[], maxTokensBudget = this.maxTokens): PromptContextPayload {
+    const slots = this.getSlotsForTags(tags);
+    return this.buildPromptContextFromSlots(slots, maxTokensBudget);
+  }
+
+  /**
+   * Returns active tags merged across ask, plan, and agent.
+   */
+  public listActiveTagsAnyMode(): string[] {
+    const merged = new Set<string>();
+    for (const mode of this.listModes()) {
+      for (const tag of this.activeTagsByMode[mode]) {
+        merged.add(tag);
+      }
+    }
+
+    return this.slots
+      .map((slot) => slot.tag)
+      .filter((tag) => merged.has(tag));
+  }
+
+  /**
+   * Returns slots targeted by an explicit list of tags.
+   */
+  public getSlotsForTags(tags: string[]): ContextSlot[] {
+    if (tags.length === 0) {
+      return [];
+    }
+
+    const tagSet = new Set(tags);
+    return this.slots.filter((slot) => tagSet.has(slot.tag));
+  }
+
+  private buildPromptContextFromSlots(slots: ContextSlot[], maxTokensBudget: number): PromptContextPayload {
     if (slots.length === 0 || maxTokensBudget <= 0) {
       return {
         content: "",

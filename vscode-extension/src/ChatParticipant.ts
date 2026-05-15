@@ -1,14 +1,7 @@
 import * as vscode from "vscode";
 import * as chatUtils from "@vscode/chat-extension-utils";
 import { ContextRingBuffer } from "./ContextRingBuffer";
-import { getCtxChatModeLabel, resolveCtxChatMode } from "./WorkspacePackBuilder";
-
-interface ChatRequestModeInfo {
-  modeInstructions2?: {
-    name: string;
-    content: string;
-  };
-}
+import { getCtxChatModeLabel, resolveCtxChatModeFromRequest } from "./WorkspacePackBuilder";
 
 export interface CtxInjectionSnapshot {
   modeLabel: string;
@@ -29,12 +22,19 @@ export function registerChatParticipant(
   const participant = vscode.chat.createChatParticipant(
     "ctxpack.assistant",
     async (request, chatContext, stream, token) => {
-      const requestWithMode = request as vscode.ChatRequest & ChatRequestModeInfo;
-      const chatMode = resolveCtxChatMode(requestWithMode.modeInstructions2?.name);
-      const scopeLabel = buffer.chatScopeSummary(chatMode);
+      const modeResolution = resolveCtxChatModeFromRequest(request);
+      const chatMode = modeResolution.mode;
       const modeLabel = getCtxChatModeLabel(chatMode);
+      const forwardedTools = chatMode === "agent" || modeResolution.source === "fallback" ? vscode.lm.tools : [];
       const contextTokenBudget = getContextTokenBudget(request.model?.maxInputTokens);
-      const promptContext = buffer.buildPromptContext(chatMode, contextTokenBudget);
+      const globalActiveTags = buffer.listActiveTagsAnyMode();
+      const hasGlobalSelection = globalActiveTags.length > 0;
+      const scopeLabel = hasGlobalSelection
+        ? `selected slots (all modes): ${globalActiveTags.join(", ")}`
+        : buffer.chatScopeSummary(chatMode);
+      const promptContext = hasGlobalSelection
+        ? buffer.buildPromptContextForTags(globalActiveTags, contextTokenBudget)
+        : buffer.buildPromptContext(chatMode, contextTokenBudget);
       const omittedSummary = promptContext.omittedTags.length
         ? `Omitted slots because of prompt budget: ${promptContext.omittedTags.join(", ")}.`
         : "";
@@ -62,6 +62,20 @@ export function registerChatParticipant(
           `Estimated context tokens: ~${promptContext.estimatedTokens} / budget ~${contextTokenBudget}`,
         ].join("  \n")
       );
+
+      if (buffer.listSlots().length === 0) {
+        stream.markdown(buildEmptyBufferGuide(modeLabel));
+        onInjectionSnapshot?.({
+          ...baseSnapshot,
+          status: "sent",
+        });
+        return {
+          metadata: {
+            source: "ctxpack-empty-buffer-guide",
+          },
+        };
+      }
+
       const contextBlock = promptContext.content
         ? [
             `[CTXPACK SESSION CONTEXT | mode: ${modeLabel} | scope: ${scopeLabel}]`,
@@ -101,13 +115,17 @@ export function registerChatParticipant(
               references: true,
               responseText: true,
             },
-            tools: vscode.lm.tools,
+            tools: forwardedTools,
             extensionMode: context.extensionMode,
           },
           token
         );
 
-        const result = await libResult.result;
+        const result = await awaitWithTimeout(
+          libResult.result,
+          45000,
+          "CtxPack request timed out while waiting for the language model response."
+        );
         onInjectionSnapshot?.({
           ...baseSnapshot,
           status: "sent",
@@ -149,4 +167,42 @@ function getContextTokenBudget(modelMaxInputTokens: number | undefined): number 
   }
 
   return Math.max(700, Math.min(5000, Math.floor(modelMaxInputTokens * 0.3)));
+}
+
+async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(new Error(timeoutMessage));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
+function buildEmptyBufferGuide(modeLabel: string): string {
+  return [
+    "**CtxPack is active, but the buffer is empty**",
+    `You invoked @ctx in ${modeLabel} mode, but there are no buffered slots yet.`,
+    "",
+    "**How to use the extension**",
+    "1. Add context to the buffer:",
+    "   - `CtxPack: Push selection to buffer`",
+    "   - `CtxPack: Push entire file to buffer`",
+    "   - `CtxPack: Push file or directory to buffer`",
+    "   - `CtxPack: Generate semantic pack and push to buffer`",
+    "2. (Optional) Scope what `@ctx` uses with `CtxPack: Choose active slots for @ctx`.",
+    "3. Run `@ctx` again and CtxPack will inject the selected slots into the chat.",
+    "",
+    "**Quick workflow**",
+    "Use `CtxPack: Open context workflow wizard` from the Command Palette to run the full flow step by step.",
+  ].join("\n");
 }

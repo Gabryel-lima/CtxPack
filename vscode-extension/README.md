@@ -23,8 +23,9 @@ The extension and the Python script are complementary:
 - Push a file or a directory as one reusable context slot.
 - Inspect or remove buffered slots before prompting.
 - Keep `@ctx` locked to selected slots across multiple iterations.
-- Keep independent `@ctx` slot scopes for Ask, Plan, and Agent modes.
+- Apply selected active slots as the effective context source across Ask, Plan, and Agent.
 - Inject accumulated context into Copilot Chat with the `@ctx` participant.
+- Show an in-chat injection report and status bar telemetry so slot usage is visually verifiable.
 - Generate a semantic project pack from the extension and push it straight into the buffer.
 - Generate `.sem.ctx.md`, `.ctx.md`, and `.packignore` directly from the extension.
 - Accept context pushes from the CtxPack CLI through IPC.
@@ -50,10 +51,14 @@ Use the Python script when you need a durable artifact outside the current VS Co
 
 `@ctx` should be treated as an explicit "inject my current CtxPack scope" switch.
 
+`@ctx` is explicit per prompt. If you want CtxPack injection again in the next message, type `@ctx` again.
+
 That scope now has two modes:
 
 - Full-buffer mode: `@ctx` injects every slot currently stored.
 - Active-slot mode: `@ctx` injects only the slots you selected, and keeps using that same subset on every iteration until you change it.
+
+When active slots are selected, that selected subset is treated as the effective scope across Ask, Plan, and Agent.
 
 Use `@ctx` when:
 
@@ -105,13 +110,13 @@ If you prefer a guided entry point, run `CtxPack: Open context workflow wizard` 
 - `CtxPack: Push file or directory to buffer`
   Pushes a selected file or directory as a reusable slot. This is also available from the Explorer context menu.
 - `CtxPack: Choose active slots for @ctx`
-  Selects the exact slots that `@ctx` should inject and lets you store a different scope for Ask, Plan, and Agent.
+  Selects the exact slots that `@ctx` should inject as the effective scope across Ask, Plan, and Agent.
 - `CtxPack: Clear active slot filter`
   Returns `@ctx` to full-buffer mode.
 - `CtxPack: View buffer status`
   Shows current slots, rough token estimates, and timestamps.
 - `CtxPack: Show current @ctx scope`
-  Shows the current scope for Ask, Plan, and Agent separately.
+  Shows the current scope that the participant will inject.
 - `CtxPack: Inspect buffered slot`
   Opens one buffered slot in a temporary preview editor so you can verify exactly what `@ctx` would inject.
 - `CtxPack: Remove buffered slot`
@@ -256,6 +261,8 @@ The new extension commands are thin wrappers around this same CLI capability. Th
   Prefer one precise selection push over multiple full-file pushes, or lock `@ctx` to selected slots only.
 - The buffer is empty:
   Push a selection, push a file, or generate and push the semantic workspace pack before using `@ctx`.
+- Chat stays in `Evaluating` for too long:
+  The participant now uses a defensive timeout and should return an explicit failure message instead of waiting indefinitely.
 
 ## Links
 

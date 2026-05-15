@@ -2,6 +2,18 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 0.1.8
+
+- Added an explicit `@ctx` empty-buffer onboarding response so users are guided instead of getting a silent no-context flow.
+- The participant now teaches the required steps to make CtxPack work: push slots, optionally scope slots, then run `@ctx` again.
+- Added a quick-start reminder for `CtxPack: Open context workflow wizard` directly in chat when no slots are available.
+
+## 0.1.7
+
+- Added a defensive timeout for participant model calls to avoid indefinite `Evaluating` states.
+- Restricted forwarded tools to Agent mode to reduce non-agent request stalls.
+- Added global active-slot routing so any selected slots are consistently injected across Ask, Plan, and Agent modes.
+
 ## 0.1.6
 
 - Fixed a participant crash path where missing `request.model` metadata could still surface as `Failed to query the language model` when using `@ctx`.

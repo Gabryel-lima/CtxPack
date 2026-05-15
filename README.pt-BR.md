@@ -152,11 +152,13 @@ Referência visual rápida do fluxo: veja a imagem em [vscode-extension/README.m
 
 Comportamento importante:
 
+- O uso de `@ctx` é explícito por mensagem. Se você quiser injeção de contexto de novo na próxima mensagem, precisa digitar `@ctx` novamente nesse novo prompt.
 - `@ctx` não coleta arquivos sozinho.
 - `@ctx` injeta no prompt apenas o que já está no buffer.
 - O buffer só muda quando você faz push, remove slots, ou limpa a sessão.
-- Agora é possível manter o `@ctx` fixado em um subconjunto específico de slots ao longo de várias iterações.
+- Se você selecionar slots ativos, esse subconjunto vira a fonte efetiva de contexto em Ask, Plan e Agent.
 - `@ctx` não deve ser usado por padrão em todo prompt.
+- Cada requisição exibe um relatório visual de injeção (slots usados, omitidos e estimativa de tokens) e atualiza a telemetria no status bar.
 
 ### Quando usar `@ctx`
 
@@ -179,6 +181,8 @@ O `@ctx` agora funciona em dois modos:
 
 - modo buffer completo: injeta todos os slots armazenados
 - modo slots ativos: injeta apenas os slots escolhidos pelo usuário, e reaproveita esse mesmo subconjunto em cada nova iteração até que ele seja alterado
+
+Observação: quando houver slots ativos selecionados, eles são priorizados como escopo efetivo em todos os modos de chat.
 
 ### Fluxo recomendado de uso
 
@@ -262,7 +266,7 @@ npm install
 npm run compile
 npm test
 npm run package
-code --install-extension ctxpack-context-0.1.3.vsix
+code --install-extension ctxpack-context-0.1.7.vsix
 ```
 
 Também é possível instalar pela interface do VS Code: Extensões -> menu `...` -> Install from VSIX...
@@ -284,12 +288,12 @@ npm test
 npm run package
 ```
 
-Isso gera o arquivo `ctxpack-context-0.1.3.vsix`.
+Isso gera o arquivo `ctxpack-context-0.1.7.vsix`.
 
 ### Dúvidas comuns
 
 1. Preciso começar todo prompt com `@ctx`?
-  Não. Só use `@ctx` nos prompts que precisam do contexto acumulado.
+  Sim, quando você quiser injeção de contexto nesse prompt. Se a próxima mensagem também precisar, digite `@ctx` novamente.
 2. O contexto atualiza sozinho a cada prompt?
   Não. Faça novo push sempre que quiser refletir mudanças recentes.
 3. O buffer fica salvo para sempre?
@@ -301,7 +305,10 @@ Isso gera o arquivo `ctxpack-context-0.1.3.vsix`.
 6. Como exporto contexto para outra LLM em vez de usar só o chat do Copilot?
   Rode `CtxPack: Generate semantic project pack` ou `CtxPack: Generate readable project pack`.
 7. Como garantir que a IA enxergue sempre só um arquivo, um diretório, ou alguns slots específicos em cada iteração?
-  Faça push desse conteúdo e depois use `CtxPack: Choose active slots for @ctx`.
+  Faça push desse conteúdo e depois use `CtxPack: Choose active slots for @ctx`. Esse subconjunto passa a ser a fonte efetiva de contexto em Ask, Plan e Agent.
+
+8. E se o chat ficar muito tempo em `Evaluating`?
+  O participante agora tem timeout defensivo e deve retornar erro explícito em vez de ficar aguardando indefinidamente.
 
 ## Atualizar o próprio script
 

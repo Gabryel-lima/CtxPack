@@ -6,6 +6,7 @@ import {
   createReadablePack,
   createSemanticPack,
   resolveCtxChatMode,
+  resolveCtxChatModeFromRequest,
 } from "../src/WorkspacePackBuilder";
 
 describe("WorkspacePackBuilder", () => {
@@ -64,5 +65,17 @@ describe("WorkspacePackBuilder", () => {
     expect(resolveCtxChatMode("Agent")).toBe("agent");
     expect(resolveCtxChatMode("Plan")).toBe("plan");
     expect(resolveCtxChatMode(undefined)).toBe("ask");
+  });
+
+  it("resolves mode from request shape variants", () => {
+    expect(resolveCtxChatModeFromRequest({ modeInstructions2: { name: "Agent" } }).mode).toBe("agent");
+    expect(resolveCtxChatModeFromRequest({ modeInstructions: { name: "Plan" } }).mode).toBe("plan");
+    expect(resolveCtxChatModeFromRequest({ modeName: "Ask" }).mode).toBe("ask");
+  });
+
+  it("falls back to ask when mode is absent", () => {
+    const resolved = resolveCtxChatModeFromRequest({ prompt: "hello" });
+    expect(resolved.mode).toBe("ask");
+    expect(resolved.source).toBe("fallback");
   });
 });
