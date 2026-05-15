@@ -6,7 +6,7 @@ export type CtxChatMode = "ask" | "plan" | "agent";
 export interface CtxChatModeResolution {
   mode: CtxChatMode;
   rawName?: string;
-  source: "request" | "fallback";
+  source: "request" | "context" | "fallback";
 }
 
 export interface WorkspacePackOptions {
@@ -190,20 +190,42 @@ export function resolveCtxChatMode(name: string | undefined): CtxChatMode {
   return "ask";
 }
 
-export function resolveCtxChatModeFromRequest(requestLike: unknown): CtxChatModeResolution {
+export function resolveCtxChatModeFromRequest(requestLike: unknown, chatContextLike?: unknown): CtxChatModeResolution {
   const rawName = extractModeNameFromRequest(requestLike);
-  if (!rawName) {
+  if (rawName) {
     return {
-      mode: "ask",
-      source: "fallback",
+      mode: resolveCtxChatMode(rawName),
+      rawName,
+      source: "request",
+    };
+  }
+
+  const contextRawName = extractModeNameFromRequest(chatContextLike);
+  if (contextRawName) {
+    return {
+      mode: resolveCtxChatMode(contextRawName),
+      rawName: contextRawName,
+      source: "context",
     };
   }
 
   return {
-    mode: resolveCtxChatMode(rawName),
-    rawName,
-    source: "request",
+    mode: "ask",
+    source: "fallback",
   };
+}
+
+export function getCtxChatModeDisplay(modeResolution: CtxChatModeResolution): string {
+  const resolved = getCtxChatModeLabel(modeResolution.mode);
+  if (modeResolution.source === "fallback") {
+    return `Unknown (fallback: ${resolved})`;
+  }
+
+  if (modeResolution.source === "context") {
+    return `${resolved} (inferred)`;
+  }
+
+  return resolved;
 }
 
 function extractModeNameFromRequest(requestLike: unknown): string | undefined {

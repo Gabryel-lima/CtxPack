@@ -2,6 +2,14 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 0.1.10
+
+- Improved `@ctx` chat mode detection by checking request and chat context metadata before falling back.
+- Fixed misleading mode display: when mode metadata is unavailable, the report now shows `Unknown (fallback: Ask)` instead of incorrectly claiming Ask mode.
+- Added tool forwarding guardrails to avoid provider limits by capping forwarded tools to a safe ceiling.
+- Added automatic retry when the provider rejects a request due to tool count limits, falling back to a model-managed tool set.
+- Improved `CtxPack injection report` formatting and error message spacing to avoid concatenated lines in chat output.
+
 ## 0.1.9
 
 - Fixed chat mode tool forwarding logic to be dynamically responsive to user mode selection.

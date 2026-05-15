@@ -84,6 +84,10 @@ Practical rule:
 
 CtxPack respects the current Copilot Chat mode and adapts tool availability accordingly:
 
+- If VS Code does not expose mode metadata for a request, CtxPack marks it as `Unknown (fallback: Ask)` and avoids forcing Ask-specific behavior.
+- Tool forwarding is capped to a safe maximum to avoid provider-side tool-count rejections.
+- If a provider still rejects a request because of tool count, CtxPack retries automatically with a model-managed tool set.
+
 ### Agent Mode
 - **Purpose**: Autonomous task execution (coding, refactoring, debugging)
 - **Context**: CtxPack context is injected and used for tool-driven workflows
@@ -285,6 +289,8 @@ The new extension commands are thin wrappers around this same CLI capability. Th
   Prefer one precise selection push over multiple full-file pushes, or lock `@ctx` to selected slots only.
 - The buffer is empty:
   Push a selection, push a file, or generate and push the semantic workspace pack before using `@ctx`.
+- You see `Cannot have more than ... tools per request`:
+  CtxPack now retries automatically with model-managed tool selection. If this persists, reduce loaded integrations/tools and retry.
 - Chat stays in `Evaluating` for too long:
   The participant now uses a defensive timeout and should return an explicit failure message instead of waiting indefinitely.
 
