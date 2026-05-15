@@ -332,10 +332,21 @@ function extractModeNameFromRequest(requestLike: unknown): string | undefined {
     readPath(requestLike, ["modeInstructions", "name"]),
     readPath(requestLike, ["modeInstruction", "name"]),
     readPath(requestLike, ["mode", "name"]),
+    readPath(requestLike, ["mode", "label"]),
+    readPath(requestLike, ["mode", "id"]),
     readPath(requestLike, ["chatMode", "name"]),
+    readPath(requestLike, ["chatMode", "label"]),
+    readPath(requestLike, ["chatMode", "id"]),
+    readPath(requestLike, ["participantMode", "name"]),
+    readPath(requestLike, ["participantMode", "id"]),
+    readPath(requestLike, ["session", "mode", "name"]),
+    readPath(requestLike, ["session", "mode", "id"]),
     readPath(requestLike, ["modeName"]),
+    readPath(requestLike, ["modeId"]),
+    readPath(requestLike, ["modeKind"]),
     readPath(requestLike, ["mode"]),
     readPath(requestLike, ["chatMode"]),
+    readPath(requestLike, ["participantMode"]),
   ];
 
   for (const candidate of directCandidates) {

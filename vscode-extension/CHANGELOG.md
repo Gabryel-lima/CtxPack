@@ -2,6 +2,13 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 0.1.12
+
+- Reduced participant request stalls by increasing request timeout windows and retrying without explicit tools when a tool-heavy request times out.
+- Updated fallback mode behavior to default to agentic intent when metadata is unavailable and no explicit ask-only signal is detected.
+- Reduced explicit tool forwarding payloads (mode-aware limits) to lower latency and avoid provider-side overload in ambiguous mode scenarios.
+- Expanded mode metadata extraction with additional candidate fields used by different chat provider payloads.
+
 ## 0.1.11
 
 - Improved fallback mode behavior to infer effective intent dynamically (Ask/Plan/Agent) from request signals, including explicit differentiation between `Set Agent` and `Pick Model` flows.

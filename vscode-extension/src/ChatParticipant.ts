@@ -189,6 +189,11 @@ async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeo
   }
 }
 
+function isTimeoutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /timed out while waiting for the language model response/i.test(message);
+}
+
 /**
  * Determines if tools should be forwarded to the language model based on the current chat mode.
  * 
@@ -245,7 +250,12 @@ function inferIntentMode(request: vscode.ChatRequest, chatContext: vscode.ChatCo
     return "agent";
   }
 
-  return "ask";
+  if (/(\?|como\b|what\b|why\b|qual\b|quais\b|explique|explain|resuma|summari[sz]e)/u.test(signalText)) {
+    return "ask";
+  }
+
+  // Prefer agentic behavior when metadata is missing to avoid blocking legitimate edit requests.
+  return "agent";
 }
 
 function collectIntentSignals(request: vscode.ChatRequest, chatContext: vscode.ChatContext): string[] {
@@ -290,11 +300,11 @@ function collectIntentSignals(request: vscode.ChatRequest, chatContext: vscode.C
 
 function getModeBehaviorInstruction(mode: CtxResolvedChatMode, effectiveMode: CtxChatMode): string {
   if (mode === "auto") {
-    return `Mode metadata is unavailable: inferred intent is ${getCtxChatModeLabel(effectiveMode)}. Keep execution unblocked and use tools when they improve correctness.`;
+    return `Mode metadata is unavailable: inferred intent is ${getCtxChatModeLabel(effectiveMode)}. Keep execution unblocked, and when edits are requested, proceed agentically.`;
   }
 
   if (mode === "agent") {
-    return "In Agent mode, keep the request agentic and allow normal tool use.";
+    return "In Agent mode, keep the request agentic, execute concrete steps, and use tools naturally when they improve correctness.";
   }
 
   if (mode === "plan") {
@@ -302,7 +312,7 @@ function getModeBehaviorInstruction(mode: CtxResolvedChatMode, effectiveMode: Ct
   }
 
   if (mode === "ask") {
-    return "In Ask mode, answer directly and use tools only when that is the natural path for the current Copilot setup.";
+    return "In Ask mode, answer directly first, but do not block tool usage or edits when the user explicitly asks to implement changes.";
   }
 
   return "Mode metadata is unavailable: infer intent from the latest user prompt and history, keep execution unblocked, and use tools when they improve correctness.";
@@ -327,8 +337,8 @@ function getToolLimitFromModel(model: vscode.LanguageModelChat | undefined): num
   }
 
   // ChatRequest.model (LanguageModelChat) does not expose toolCalling capability in this API version.
-  // Keep a conservative ceiling below common provider limits to avoid request rejection.
-  return 96;
+  // Keep a conservative ceiling to reduce latency and avoid provider-side tool-list limits.
+  return 48;
 }
 
 function selectToolsForModel(
@@ -341,13 +351,19 @@ function selectToolsForModel(
     return [];
   }
 
-  // In fallback mode, prefer not to block tools because the mode could not be detected reliably.
-  const allowToolsByMode = shouldForwardToolsForMode(mode) || modeSource === "fallback";
+  // In fallback mode (metadata unavailable), avoid forwarding a large explicit tool list.
+  // Let the provider manage tools implicitly to reduce request payload and timeout risk.
+  if (modeSource === "fallback") {
+    return [];
+  }
+
+  const allowToolsByMode = shouldForwardToolsForMode(mode);
   if (!allowToolsByMode) {
     return [];
   }
 
-  const limit = getToolLimitFromModel(model);
+  const modeLimit = mode === "agent" ? 48 : 24;
+  const limit = Math.min(modeLimit, getToolLimitFromModel(model));
   if (limit <= 0) {
     return [];
   }
@@ -368,35 +384,8 @@ async function sendWithToolFallback(
   tools: readonly vscode.LanguageModelToolInformation[],
   extensionMode: vscode.ExtensionMode
 ): Promise<vscode.ChatResult> {
-  const requestWithTools = chatUtils.sendChatParticipantRequest(
-    request,
-    chatContext,
-    {
-      prompt,
-      responseStreamOptions: {
-        stream,
-        references: true,
-        responseText: true,
-      },
-      tools,
-      extensionMode,
-    },
-    token
-  );
-
-  try {
-    return await awaitWithTimeout(
-      requestWithTools.result,
-      45000,
-      "CtxPack request timed out while waiting for the language model response."
-    );
-  } catch (error) {
-    if (!isToolCountLimitError(error)) {
-      throw error;
-    }
-
-    stream.markdown("\n\nCtxPack note: tool list exceeded the model limit; retrying with model-managed tool set.");
-    const fallbackRequest = chatUtils.sendChatParticipantRequest(
+  const sendRequest = (explicitTools?: readonly vscode.LanguageModelToolInformation[]) =>
+    chatUtils.sendChatParticipantRequest(
       request,
       chatContext,
       {
@@ -406,14 +395,36 @@ async function sendWithToolFallback(
           references: true,
           responseText: true,
         },
+        ...(explicitTools && explicitTools.length > 0 ? { tools: explicitTools } : {}),
         extensionMode,
       },
       token
     );
 
+  const hasExplicitTools = tools.length > 0;
+  const firstAttempt = sendRequest(hasExplicitTools ? tools : undefined);
+
+  try {
+    return await awaitWithTimeout(
+      firstAttempt.result,
+      hasExplicitTools ? 90000 : 180000,
+      "CtxPack request timed out while waiting for the language model response."
+    );
+  } catch (error) {
+    const shouldRetryWithoutTools = hasExplicitTools && (isToolCountLimitError(error) || isTimeoutError(error));
+    if (!shouldRetryWithoutTools) {
+      throw error;
+    }
+
+    const note = isToolCountLimitError(error)
+      ? "CtxPack note: tool list exceeded the model limit; retrying with model-managed tool set."
+      : "CtxPack note: request with explicit tools timed out; retrying with model-managed tool set.";
+    stream.markdown(`\n\n${note}`);
+    const fallbackRequest = sendRequest(undefined);
+
     return await awaitWithTimeout(
       fallbackRequest.result,
-      45000,
+      180000,
       "CtxPack request timed out while waiting for the language model response after tool fallback."
     );
   }
