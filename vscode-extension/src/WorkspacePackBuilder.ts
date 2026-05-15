@@ -2,9 +2,10 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 export type CtxChatMode = "ask" | "plan" | "agent";
+export type CtxResolvedChatMode = CtxChatMode | "auto";
 
 export interface CtxChatModeResolution {
-  mode: CtxChatMode;
+  mode: CtxResolvedChatMode;
   rawName?: string;
   source: "request" | "context" | "fallback";
 }
@@ -152,18 +153,107 @@ const MODE_LABELS: Record<CtxChatMode, string> = {
 
 export const DEFAULT_PACKIGNORE_TEMPLATE = `# .packignore - patterns to exclude from CtxPack exports
 # Lines starting with # are comments.
-# Examples:
-# node_modules
-# *.lock
-# build/
-# dist/
+# Pattern style: simple glob-like entries (* and ?) and path prefixes.
 
+# Version control and editor metadata
+.git
+.svn
+.hg
+.idea
+.vscode
+
+# JavaScript/TypeScript ecosystems
 node_modules
-dist/
-build/
-coverage/
-*.lock
+bower_components
+jspm_packages
+.pnpm-store
+.npm
+.yarn
+.yarn/cache
+.yarn/unplugged
+.yarn/install-state.gz
+.yarn/build-state.yml
+
+# Python
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.tox
+.nox
+.venv
+venv
+env
+pip-wheel-metadata
+
+# JVM/.NET/Go/Rust build outputs
+.gradle
+.mvn
+target
+out
+build
+bin
+obj
+TestResults
+pkg
+
+# Frontend framework outputs
+dist
+coverage
+.next
+.nuxt
+.svelte-kit
+.parcel-cache
+.angular
+.astro
+.storybook-static
+
+# Native/mobile/apple
+DerivedData
+Pods
+
+# Infrastructure and deployment state
+.terraform
+*.tfstate
+*.tfstate.*
+
+# Caches, logs, and temporary files
+.cache
+tmp
+temp
+logs
+*.log
+
+# Environment and secrets
 .env
+.env.*
+*.pem
+*.key
+*.p12
+*.crt
+
+# Lock files and dependency snapshots
+*.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+poetry.lock
+Pipfile.lock
+Cargo.lock
+
+# Archives and binary bundles
+*.zip
+*.tar
+*.gz
+*.xz
+*.7z
+*.jar
+*.war
+*.ear
+
+# Operating system artifacts
+.DS_Store
+Thumbs.db
 `;
 
 export function listCtxChatModes(): CtxChatMode[] {
@@ -210,12 +300,16 @@ export function resolveCtxChatModeFromRequest(requestLike: unknown, chatContextL
   }
 
   return {
-    mode: "ask",
+    mode: "auto",
     source: "fallback",
   };
 }
 
 export function getCtxChatModeDisplay(modeResolution: CtxChatModeResolution): string {
+  if (modeResolution.mode === "auto") {
+    return "Auto (mode metadata unavailable)";
+  }
+
   const resolved = getCtxChatModeLabel(modeResolution.mode);
   if (modeResolution.source === "fallback") {
     return `Unknown (fallback: ${resolved})`;

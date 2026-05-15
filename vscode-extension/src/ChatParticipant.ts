@@ -3,6 +3,8 @@ import * as chatUtils from "@vscode/chat-extension-utils";
 import { ContextRingBuffer } from "./ContextRingBuffer";
 import {
   CtxChatMode,
+  CtxResolvedChatMode,
+  getCtxChatModeLabel,
   getCtxChatModeDisplay,
   resolveCtxChatModeFromRequest,
 } from "./WorkspacePackBuilder";
@@ -30,19 +32,19 @@ export function registerChatParticipant(
     "ctxpack.assistant",
     async (request, chatContext, stream, token) => {
       const modeResolution = resolveCtxChatModeFromRequest(request, chatContext);
-      const chatMode = modeResolution.mode;
-      const modeLabel = getCtxChatModeDisplay(modeResolution);
+      const effectiveMode = resolveEffectiveMode(modeResolution.mode, request, chatContext);
+      const modeLabel = buildModeLabel(modeResolution, effectiveMode);
       const availableTools = vscode.lm.tools;
-      const forwardedTools = selectToolsForModel(request.model, availableTools, chatMode, modeResolution.source);
+      const forwardedTools = selectToolsForModel(request.model, availableTools, effectiveMode, modeResolution.source);
       const contextTokenBudget = getContextTokenBudget(request.model?.maxInputTokens);
       const globalActiveTags = buffer.listActiveTagsAnyMode();
       const hasGlobalSelection = globalActiveTags.length > 0;
       const scopeLabel = hasGlobalSelection
         ? `selected slots (all modes): ${globalActiveTags.join(", ")}`
-        : buffer.chatScopeSummary(chatMode);
+        : buffer.chatScopeSummary(effectiveMode);
       const promptContext = hasGlobalSelection
         ? buffer.buildPromptContextForTags(globalActiveTags, contextTokenBudget)
-        : buffer.buildPromptContext(chatMode, contextTokenBudget);
+        : buffer.buildPromptContext(effectiveMode, contextTokenBudget);
       const omittedSummary = promptContext.omittedTags.length
         ? `Omitted slots because of prompt budget: ${promptContext.omittedTags.join(", ")}.`
         : "";
@@ -109,10 +111,7 @@ export function registerChatParticipant(
         "You are the CtxPack participant for VS Code.",
         `Current chat mode: ${modeLabel}.`,
         "Respect the current Copilot chat mode when available instead of forcing a generic Q&A behavior.",
-        "In Agent mode, keep the request agentic and allow normal tool use.",
-        "In Plan mode, prioritize planning and sequencing over direct execution unless the user explicitly asks to act.",
-        "In Ask mode, answer directly and use tools only when that is the natural path for the current Copilot setup.",
-        "When mode cannot be detected by API fields, do not force Ask behavior; infer intent from the user request and chat context.",
+        getModeBehaviorInstruction(modeResolution.mode, effectiveMode),
         "Treat the CtxPack buffer as grounded workspace evidence that must be read before answering when it is present.",
         "Do not ignore the CtxPack block. Use it first, then combine it with chat history and tool results.",
         contextBlock,
@@ -203,6 +202,118 @@ async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeo
  */
 function shouldForwardToolsForMode(mode: CtxChatMode): boolean {
   return mode === "agent" || mode === "ask";
+}
+
+function buildModeLabel(mode: { mode: CtxResolvedChatMode; source: "request" | "context" | "fallback" }, effectiveMode: CtxChatMode): string {
+  const resolvedLabel = getCtxChatModeDisplay(mode);
+  if (mode.mode !== "auto") {
+    return resolvedLabel;
+  }
+
+  return `${resolvedLabel} -> ${getCtxChatModeLabel(effectiveMode)} (intent)`;
+}
+
+function resolveEffectiveMode(mode: CtxResolvedChatMode, request: vscode.ChatRequest, chatContext: vscode.ChatContext): CtxChatMode {
+  if (mode !== "auto") {
+    return mode;
+  }
+
+  return inferIntentMode(request, chatContext);
+}
+
+function inferIntentMode(request: vscode.ChatRequest, chatContext: vscode.ChatContext): CtxChatMode {
+  if (request.toolReferences.length > 0) {
+    return "agent";
+  }
+
+  const signalText = collectIntentSignals(request, chatContext).join(" ").toLowerCase();
+
+  // Distinguish explicit agent activation from generic model picking.
+  if (/(set\s*agent|modo\s*agent|agent\s*mode|ativar\s*agent|trocar\s*para\s*agent)/u.test(signalText)) {
+    return "agent";
+  }
+
+  if (/(pick\s*model|choose\s*model|select\s*model|escolher\s*modelo|selecionar\s*modelo|trocar\s*modelo)/u.test(signalText)) {
+    return "ask";
+  }
+
+  if (/(\bplan\b|\bplano\b|arquitetura|roadmap|estrat[eé]gia|passo\s*a\s*passo|sequ[êe]ncia)/u.test(signalText)) {
+    return "plan";
+  }
+
+  if (/(implemente|implement|corrija|fix|refatore|refactor|edite|edit|execute|rode|run|crie|fa[çc]a|apply|patch|gera\s*c[oó]digo)/u.test(signalText)) {
+    return "agent";
+  }
+
+  return "ask";
+}
+
+function collectIntentSignals(request: vscode.ChatRequest, chatContext: vscode.ChatContext): string[] {
+  const parts: string[] = [request.prompt, request.command ?? ""];
+
+  for (const reference of request.references) {
+    if (reference.modelDescription) {
+      parts.push(reference.modelDescription);
+    }
+  }
+
+  for (const turn of chatContext.history.slice(-6)) {
+    if (isRecord(turn)) {
+      const prompt = "prompt" in turn ? asString(turn.prompt) : undefined;
+      const command = "command" in turn ? asString(turn.command) : undefined;
+      if (prompt) {
+        parts.push(prompt);
+      }
+      if (command) {
+        parts.push(command);
+      }
+
+      const response = "response" in turn ? turn.response : undefined;
+      if (Array.isArray(response)) {
+        for (const part of response) {
+          if (!isRecord(part)) {
+            continue;
+          }
+
+          const commandValue = isRecord(part.value) ? part.value : undefined;
+          const title = commandValue ? asString(commandValue.title) : undefined;
+          if (title) {
+            parts.push(title);
+          }
+        }
+      }
+    }
+  }
+
+  return parts.filter((value) => value.trim().length > 0);
+}
+
+function getModeBehaviorInstruction(mode: CtxResolvedChatMode, effectiveMode: CtxChatMode): string {
+  if (mode === "auto") {
+    return `Mode metadata is unavailable: inferred intent is ${getCtxChatModeLabel(effectiveMode)}. Keep execution unblocked and use tools when they improve correctness.`;
+  }
+
+  if (mode === "agent") {
+    return "In Agent mode, keep the request agentic and allow normal tool use.";
+  }
+
+  if (mode === "plan") {
+    return "In Plan mode, prioritize planning and sequencing over direct execution unless the user explicitly asks to act.";
+  }
+
+  if (mode === "ask") {
+    return "In Ask mode, answer directly and use tools only when that is the natural path for the current Copilot setup.";
+  }
+
+  return "Mode metadata is unavailable: infer intent from the latest user prompt and history, keep execution unblocked, and use tools when they improve correctness.";
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function isToolCountLimitError(error: unknown): boolean {

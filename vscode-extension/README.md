@@ -84,9 +84,11 @@ Practical rule:
 
 CtxPack respects the current Copilot Chat mode and adapts tool availability accordingly:
 
-- If VS Code does not expose mode metadata for a request, CtxPack marks it as `Unknown (fallback: Ask)` and avoids forcing Ask-specific behavior.
+- If VS Code does not expose mode metadata for a request, CtxPack marks it as `Auto (mode metadata unavailable)` and avoids forcing Ask-specific behavior.
+- In `Auto`, CtxPack infers effective intent from request signals (for example, distinguishing `Set Agent` from `Pick Model`) so behavior remains dynamic.
 - Tool forwarding is capped to a safe maximum to avoid provider-side tool-count rejections.
 - If a provider still rejects a request because of tool count, CtxPack retries automatically with a model-managed tool set.
+- Every extension command now ensures a workspace `.packignore` exists before execution.
 
 ### Agent Mode
 - **Purpose**: Autonomous task execution (coding, refactoring, debugging)

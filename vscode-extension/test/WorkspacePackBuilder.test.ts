@@ -5,6 +5,7 @@ import {
   createPackignoreTemplate,
   createReadablePack,
   createSemanticPack,
+  getCtxChatModeDisplay,
   resolveCtxChatMode,
   resolveCtxChatModeFromRequest,
 } from "../src/WorkspacePackBuilder";
@@ -59,6 +60,8 @@ describe("WorkspacePackBuilder", () => {
     expect(result.outputPath).toBe(path.join(tempRoot, ".packignore"));
     expect(fs.existsSync(result.outputPath)).toBe(true);
     expect(result.content).toContain("node_modules");
+    expect(result.content).toContain(".terraform");
+    expect(result.content).toContain("package-lock.json");
   });
 
   it("normalizes chat modes from VS Code mode names", () => {
@@ -73,9 +76,20 @@ describe("WorkspacePackBuilder", () => {
     expect(resolveCtxChatModeFromRequest({ modeName: "Ask" }).mode).toBe("ask");
   });
 
-  it("falls back to ask when mode is absent", () => {
+  it("resolves mode from chat context when request lacks mode", () => {
+    const resolved = resolveCtxChatModeFromRequest(
+      { prompt: "hello" },
+      { modeInstructions2: { name: "Agent" } }
+    );
+
+    expect(resolved.mode).toBe("agent");
+    expect(resolved.source).toBe("context");
+  });
+
+  it("falls back to auto when mode is absent", () => {
     const resolved = resolveCtxChatModeFromRequest({ prompt: "hello" });
-    expect(resolved.mode).toBe("ask");
+    expect(resolved.mode).toBe("auto");
     expect(resolved.source).toBe("fallback");
+    expect(getCtxChatModeDisplay(resolved)).toContain("Auto");
   });
 });

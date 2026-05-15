@@ -60,6 +60,29 @@ export function activate(context: vscode.ExtensionContext): void {
     updateStatusBar();
   });
 
+  const ensurePackignoreForAnyCommand = (): void => {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return;
+    }
+
+    try {
+      createPackignoreTemplate(workspaceFolder.uri.fsPath);
+    } catch {
+      // Keep command execution flowing even if .packignore cannot be created.
+    }
+  };
+
+  const registerCtxCommand = <T extends unknown[]>(
+    commandId: string,
+    handler: (...args: T) => Promise<void> | void
+  ): vscode.Disposable => {
+    return vscode.commands.registerCommand(commandId, async (...args: T) => {
+      ensurePackignoreForAnyCommand();
+      await handler(...args);
+    });
+  };
+
   const askToActivateTag = async (tag: string): Promise<void> => {
     const answer = await vscode.window.showQuickPick(
       [
@@ -178,7 +201,7 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  const pushDisposable = vscode.commands.registerCommand("ctxpack.push", async () => {
+  const pushDisposable = registerCtxCommand("ctxpack.push", async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       vscode.window.showWarningMessage("CtxPack: no active editor available for push.");
@@ -217,7 +240,7 @@ export function activate(context: vscode.ExtensionContext): void {
     await askToActivateTag(tag.trim() || defaultTag);
   });
 
-  const pushFileDisposable = vscode.commands.registerCommand("ctxpack.pushFile", async () => {
+  const pushFileDisposable = registerCtxCommand("ctxpack.pushFile", async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       vscode.window.showWarningMessage("CtxPack: no active editor available for pushFile.");
@@ -237,17 +260,17 @@ export function activate(context: vscode.ExtensionContext): void {
     await askToActivateTag(tag);
   });
 
-  const pushPathDisposable = vscode.commands.registerCommand("ctxpack.pushPath", handlePathPush);
-  const pushExplorerFileDisposable = vscode.commands.registerCommand("ctxpack.pushExplorerFile", handlePathPush);
-  const pushExplorerFolderDisposable = vscode.commands.registerCommand("ctxpack.pushExplorerFolder", handlePathPush);
+  const pushPathDisposable = registerCtxCommand("ctxpack.pushPath", handlePathPush);
+  const pushExplorerFileDisposable = registerCtxCommand("ctxpack.pushExplorerFile", handlePathPush);
+  const pushExplorerFolderDisposable = registerCtxCommand("ctxpack.pushExplorerFolder", handlePathPush);
 
-  const clearDisposable = vscode.commands.registerCommand("ctxpack.clear", () => {
+  const clearDisposable = registerCtxCommand("ctxpack.clear", () => {
     buffer.clear();
     updateStatusBar("$(database) ctx: buffer cleared");
     vscode.window.showInformationMessage("CtxPack: buffer cleared.");
   });
 
-  const selectActiveSlotsDisposable = vscode.commands.registerCommand("ctxpack.selectActiveSlots", async () => {
+  const selectActiveSlotsDisposable = registerCtxCommand("ctxpack.selectActiveSlots", async () => {
     const tags = await pickSlots(
       "CtxPack: choose active slots for @ctx",
       "Selected slots will be injected on every @ctx iteration until you change them"
@@ -278,13 +301,13 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.showInformationMessage(`CtxPack: updated ${modes.length} mode(s) to use ${tags.length} selected slot(s).`);
   });
 
-  const clearActiveSelectionDisposable = vscode.commands.registerCommand("ctxpack.clearActiveSelection", () => {
+  const clearActiveSelectionDisposable = registerCtxCommand("ctxpack.clearActiveSelection", () => {
     buffer.clearActiveTags("all");
     updateStatusBar();
     vscode.window.showInformationMessage("CtxPack: active slot filter cleared for ask, plan, and agent.");
   });
 
-  const statusDisposable = vscode.commands.registerCommand("ctxpack.status", async () => {
+  const statusDisposable = registerCtxCommand("ctxpack.status", async () => {
     const slots = buffer.listSlots();
     if (slots.length === 0) {
       vscode.window.showInformationMessage("CtxPack: buffer is empty.");
@@ -304,7 +327,7 @@ export function activate(context: vscode.ExtensionContext): void {
     });
   });
 
-  const inspectSlotDisposable = vscode.commands.registerCommand("ctxpack.inspectSlot", async () => {
+  const inspectSlotDisposable = registerCtxCommand("ctxpack.inspectSlot", async () => {
     const slots = buffer.listSlots();
     if (slots.length === 0) {
       vscode.window.showInformationMessage("CtxPack: buffer is empty.");
@@ -342,7 +365,7 @@ export function activate(context: vscode.ExtensionContext): void {
     await vscode.window.showTextDocument(doc, { preview: true });
   });
 
-  const removeSlotDisposable = vscode.commands.registerCommand("ctxpack.removeSlot", async () => {
+  const removeSlotDisposable = registerCtxCommand("ctxpack.removeSlot", async () => {
     const slots = buffer.listSlots();
     if (slots.length === 0) {
       vscode.window.showInformationMessage("CtxPack: buffer is empty.");
@@ -374,7 +397,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.showInformationMessage(`CtxPack: removed '${picked.label}' from the buffer.`);
   });
 
-  const slotScopeStatusDisposable = vscode.commands.registerCommand("ctxpack.slotScopeStatus", () => {
+  const slotScopeStatusDisposable = registerCtxCommand("ctxpack.slotScopeStatus", () => {
     const summaries = buffer.getModeScopeSummary();
     const message = listCtxChatModes()
       .map((mode) => `${getCtxChatModeLabel(mode)}: ${buffer.hasActiveSelection(mode) ? summaries[mode] : "all buffered slots"}`)
@@ -382,7 +405,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.showInformationMessage(`CtxPack: @ctx scope by mode -> ${message}.`);
   });
 
-  const exportSemanticDisposable = vscode.commands.registerCommand("ctxpack.exportSemantic", async () => {
+  const exportSemanticDisposable = registerCtxCommand("ctxpack.exportSemantic", async () => {
     const workspaceRoot = getWorkspaceRootOrWarn();
     if (!workspaceRoot) {
       return;
@@ -412,7 +435,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  const exportReadableDisposable = vscode.commands.registerCommand("ctxpack.exportReadable", async () => {
+  const exportReadableDisposable = registerCtxCommand("ctxpack.exportReadable", async () => {
     const workspaceRoot = getWorkspaceRootOrWarn();
     if (!workspaceRoot) {
       return;
@@ -437,7 +460,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  const pushWorkspaceSemanticDisposable = vscode.commands.registerCommand(
+  const pushWorkspaceSemanticDisposable = registerCtxCommand(
     "ctxpack.pushWorkspaceSemantic",
     async () => {
       const workspaceRoot = getWorkspaceRootOrWarn();
@@ -486,7 +509,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
-  const createPackignoreDisposable = vscode.commands.registerCommand("ctxpack.createPackignore", async () => {
+  const createPackignoreDisposable = registerCtxCommand("ctxpack.createPackignore", async () => {
     const workspaceRoot = getWorkspaceRootOrWarn();
     if (!workspaceRoot) {
       return;
@@ -511,7 +534,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  const wizardDisposable = vscode.commands.registerCommand("ctxpack.wizard", async () => {
+  const wizardDisposable = registerCtxCommand("ctxpack.wizard", async () => {
     const action = await vscode.window.showQuickPick(
       [
         { label: "Push selection", value: "push" },
