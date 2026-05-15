@@ -80,6 +80,30 @@ Practical rule:
 - If missing context would change the answer, use `@ctx`.
 - If context would only add noise, do not use `@ctx`.
 
+## Copilot Chat Modes
+
+CtxPack respects the current Copilot Chat mode and adapts tool availability accordingly:
+
+### Agent Mode
+- **Purpose**: Autonomous task execution (coding, refactoring, debugging)
+- **Context**: CtxPack context is injected and used for tool-driven workflows
+- **Tools**: ✅ Full tool access (file operations, searches, code generation)
+- **Use `@ctx`**: When you want the model to autonomously work with your buffered context
+
+### Ask Mode
+- **Purpose**: Direct answers and questions about code
+- **Context**: CtxPack context is injected as grounded workspace evidence
+- **Tools**: ✅ Tools available for natural use (e.g., file lookups, searches when helpful)
+- **Use `@ctx`**: When you want answers about code in your buffer, or quick clarifications
+
+### Plan Mode
+- **Purpose**: Strategic planning and architecture discussion
+- **Context**: CtxPack context is injected for reference
+- **Tools**: ❌ No tools (read-only mode for planning without side effects)
+- **Use `@ctx`**: When planning changes and want context without triggering tool execution
+
+The active-slot selection (chosen via `CtxPack: Choose active slots for @ctx`) applies consistently across all modes.
+
 ## Recommended Decision Flow
 
 1. Ask yourself whether the prompt needs repository-specific context.

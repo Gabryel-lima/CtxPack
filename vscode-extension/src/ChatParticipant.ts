@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import * as chatUtils from "@vscode/chat-extension-utils";
 import { ContextRingBuffer } from "./ContextRingBuffer";
-import { getCtxChatModeLabel, resolveCtxChatModeFromRequest } from "./WorkspacePackBuilder";
+import { CtxChatMode, getCtxChatModeLabel, resolveCtxChatModeFromRequest } from "./WorkspacePackBuilder";
 
 export interface CtxInjectionSnapshot {
   modeLabel: string;
@@ -25,7 +25,8 @@ export function registerChatParticipant(
       const modeResolution = resolveCtxChatModeFromRequest(request);
       const chatMode = modeResolution.mode;
       const modeLabel = getCtxChatModeLabel(chatMode);
-      const forwardedTools = chatMode === "agent" || modeResolution.source === "fallback" ? vscode.lm.tools : [];
+      // Tools are available in Agent and Ask modes; Plan mode is read-only
+      const forwardedTools = shouldForwardToolsForMode(chatMode) ? vscode.lm.tools : [];
       const contextTokenBudget = getContextTokenBudget(request.model?.maxInputTokens);
       const globalActiveTags = buffer.listActiveTagsAnyMode();
       const hasGlobalSelection = globalActiveTags.length > 0;
@@ -188,9 +189,24 @@ async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeo
   }
 }
 
+/**
+ * Determines if tools should be forwarded to the language model based on the current chat mode.
+ * 
+ * Tool availability per mode:
+ * - "agent": Full tool access for autonomous task execution
+ * - "ask": Tools available for natural use by the AI (e.g., file operations, searches)
+ * - "plan": Tools disabled - mode is read-only for strategic planning only
+ * 
+ * @param mode The current CtxPack chat mode
+ * @returns true if tools should be forwarded, false otherwise
+ */
+function shouldForwardToolsForMode(mode: CtxChatMode): boolean {
+  return mode === "agent" || mode === "ask";
+}
+
 function buildEmptyBufferGuide(modeLabel: string): string {
   return [
-    "**CtxPack is active, but the buffer is empty**",
+    "** CtxPack is active, but the buffer is empty**",
     `You invoked @ctx in ${modeLabel} mode, but there are no buffered slots yet.`,
     "",
     "**How to use the extension**",

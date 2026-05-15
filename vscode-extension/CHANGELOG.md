@@ -2,6 +2,13 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 0.1.9
+
+- Fixed chat mode tool forwarding logic to be dynamically responsive to user mode selection.
+- Added `shouldForwardToolsForMode()` function to determine tool availability per mode: Agent and Ask modes now receive tools, while Plan mode remains read-only.
+- Tools are now properly available in Ask mode for natural AI use (file operations, searches), fixing previous limitation where Ask mode had no tool access.
+- Improved mode detection to respect VS Code's current chat mode setting in real-time.
+
 ## 0.1.8
 
 - Added an explicit `@ctx` empty-buffer onboarding response so users are guided instead of getting a silent no-context flow.
