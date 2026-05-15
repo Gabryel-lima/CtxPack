@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
-import { registerChatParticipant } from "./ChatParticipant";
+import { CtxInjectionSnapshot, registerChatParticipant } from "./ChatParticipant";
 import {
   getWorkspaceDefaultTag,
   getWorkspaceRootOrWarn,
@@ -39,7 +39,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const buffer = new ContextRingBuffer(maxTokens);
   const workspaceRoot = resolveWorkspaceRoot(context);
   socketPath = getSocketPath(workspaceRoot);
-  registerChatParticipant(context, buffer);
+  let lastInjectionSnapshot: CtxInjectionSnapshot | undefined;
 
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBar.command = "ctxpack.status";
@@ -49,9 +49,16 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!statusBar) {
       return;
     }
-    statusBar.text = overrideText ?? `$(database) ctx: ${buffer.status()}`;
+    const suffix = formatInjectionSuffix(lastInjectionSnapshot);
+    statusBar.text = overrideText ?? `$(database) ctx: ${buffer.status()}${suffix}`;
+    statusBar.tooltip = buildStatusTooltip(buffer, lastInjectionSnapshot);
     statusBar.show();
   };
+
+  registerChatParticipant(context, buffer, (snapshot) => {
+    lastInjectionSnapshot = snapshot;
+    updateStatusBar();
+  });
 
   const askToActivateTag = async (tag: string): Promise<void> => {
     const answer = await vscode.window.showQuickPick(
@@ -575,4 +582,43 @@ export function deactivate(): void {
     statusBar.dispose();
     statusBar = undefined;
   }
+}
+
+function formatInjectionSuffix(snapshot: CtxInjectionSnapshot | undefined): string {
+  if (!snapshot) {
+    return "";
+  }
+
+  if (snapshot.status === "error") {
+    return " | @ctx error";
+  }
+
+  return ` | @ctx ${snapshot.usedTags.length} slot(s)`;
+}
+
+function buildStatusTooltip(buffer: ContextRingBuffer, snapshot: CtxInjectionSnapshot | undefined): string {
+  const lines = [
+    `CtxPack status: ${buffer.status()}`,
+  ];
+
+  if (!snapshot) {
+    lines.push("Last @ctx injection: none yet in this session.");
+    return lines.join("\n");
+  }
+
+  lines.push(`Last @ctx mode: ${snapshot.modeLabel}`);
+  lines.push(`Last @ctx scope: ${snapshot.scopeLabel}`);
+  lines.push(`Used slots (${snapshot.usedTags.length}): ${snapshot.usedTags.join(", ") || "none"}`);
+  lines.push(`Omitted slots (${snapshot.omittedTags.length}): ${snapshot.omittedTags.join(", ") || "none"}`);
+  lines.push(`Context tokens: ~${snapshot.estimatedTokens} / budget ~${snapshot.tokenBudget}`);
+
+  if (snapshot.status === "error") {
+    lines.push(`Last @ctx error: ${snapshot.errorMessage ?? "unknown"}`);
+  } else if (snapshot.status === "sent") {
+    lines.push("Last @ctx status: sent to language model.");
+  } else {
+    lines.push("Last @ctx status: prepared.");
+  }
+
+  return lines.join("\n");
 }

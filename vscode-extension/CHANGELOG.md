@@ -2,6 +2,12 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 0.1.6
+
+- Fixed a participant crash path where missing `request.model` metadata could still surface as `Failed to query the language model` when using `@ctx`.
+- Added an explicit in-chat `CtxPack injection report` showing mode, scope, used slots, omitted slots, and estimated context tokens per `@ctx` request.
+- Added status bar and tooltip telemetry for the last `@ctx` injection so slot usage is visually verifiable outside the chat response.
+
 ## 0.1.5
 
 - Made `@ctx` context injection budget-aware so large semantic buffers are trimmed to the active model capacity instead of increasing the chance of interrupted requests.

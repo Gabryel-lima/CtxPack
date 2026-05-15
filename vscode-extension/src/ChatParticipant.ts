@@ -10,9 +10,21 @@ interface ChatRequestModeInfo {
   };
 }
 
+export interface CtxInjectionSnapshot {
+  modeLabel: string;
+  scopeLabel: string;
+  usedTags: string[];
+  omittedTags: string[];
+  estimatedTokens: number;
+  tokenBudget: number;
+  status: "ready" | "sent" | "error";
+  errorMessage?: string;
+}
+
 export function registerChatParticipant(
   context: vscode.ExtensionContext,
-  buffer: ContextRingBuffer
+  buffer: ContextRingBuffer,
+  onInjectionSnapshot?: (snapshot: CtxInjectionSnapshot) => void
 ): vscode.Disposable {
   const participant = vscode.chat.createChatParticipant(
     "ctxpack.assistant",
@@ -21,11 +33,35 @@ export function registerChatParticipant(
       const chatMode = resolveCtxChatMode(requestWithMode.modeInstructions2?.name);
       const scopeLabel = buffer.chatScopeSummary(chatMode);
       const modeLabel = getCtxChatModeLabel(chatMode);
-      const contextTokenBudget = getContextTokenBudget(request.model.maxInputTokens);
+      const contextTokenBudget = getContextTokenBudget(request.model?.maxInputTokens);
       const promptContext = buffer.buildPromptContext(chatMode, contextTokenBudget);
       const omittedSummary = promptContext.omittedTags.length
         ? `Omitted slots because of prompt budget: ${promptContext.omittedTags.join(", ")}.`
         : "";
+
+      const baseSnapshot: CtxInjectionSnapshot = {
+        modeLabel,
+        scopeLabel,
+        usedTags: promptContext.usedTags,
+        omittedTags: promptContext.omittedTags,
+        estimatedTokens: promptContext.estimatedTokens,
+        tokenBudget: contextTokenBudget,
+        status: "ready",
+      };
+      onInjectionSnapshot?.(baseSnapshot);
+
+      const usedList = promptContext.usedTags.length ? promptContext.usedTags.join(", ") : "none";
+      const omittedList = promptContext.omittedTags.length ? promptContext.omittedTags.join(", ") : "none";
+      stream.markdown(
+        [
+          "**CtxPack injection report**",
+          `Mode: ${modeLabel}`,
+          `Scope: ${scopeLabel}`,
+          `Used slots (${promptContext.usedTags.length}): ${usedList}`,
+          `Omitted slots (${promptContext.omittedTags.length}): ${omittedList}`,
+          `Estimated context tokens: ~${promptContext.estimatedTokens} / budget ~${contextTokenBudget}`,
+        ].join("  \n")
+      );
       const contextBlock = promptContext.content
         ? [
             `[CTXPACK SESSION CONTEXT | mode: ${modeLabel} | scope: ${scopeLabel}]`,
@@ -71,16 +107,33 @@ export function registerChatParticipant(
           token
         );
 
-        return await libResult.result;
+        const result = await libResult.result;
+        onInjectionSnapshot?.({
+          ...baseSnapshot,
+          status: "sent",
+        });
+        return result;
       } catch (err) {
         if (token.isCancellationRequested) {
           return;
         }
         if (err instanceof vscode.LanguageModelError) {
+          onInjectionSnapshot?.({
+            ...baseSnapshot,
+            status: "error",
+            errorMessage: err.message,
+          });
           stream.markdown(`Model error: ${err.message}`);
           return;
         }
-        stream.markdown("Failed to query the language model.");
+
+        const genericMessage = err instanceof Error ? err.message : String(err);
+        onInjectionSnapshot?.({
+          ...baseSnapshot,
+          status: "error",
+          errorMessage: genericMessage,
+        });
+        stream.markdown(`Failed to query the language model. Details: ${genericMessage}`);
       }
     }
   );
