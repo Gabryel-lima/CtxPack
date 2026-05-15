@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "node",
+      "vscode",
+      "jest"
+    ],
+    "rootDir": "."
+  },
+  "include": [
+    "src",
+    "test"
+  ]
+}

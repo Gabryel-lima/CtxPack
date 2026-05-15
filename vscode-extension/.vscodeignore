@@ -1,0 +1,5 @@
+out/test/**
+src/**
+**/*.map
+**/*.ts
+node_modules/**/test/**

@@ -1,0 +1,113 @@
+import { ContextRingBuffer } from "../src/ContextRingBuffer";
+
+describe("ContextRingBuffer", () => {
+  it("keeps slots within the token limit", () => {
+    const buffer = new ContextRingBuffer(50);
+
+    buffer.push("a", "x".repeat(80));
+    buffer.push("b", "y".repeat(80));
+    buffer.push("c", "z".repeat(80));
+    buffer.push("d", "w".repeat(80));
+
+    expect(buffer.findByTag("d")).toBeDefined();
+    expect(buffer.findByTag("c")).toBeDefined();
+    expect(buffer.findByTag("b")).toBeUndefined();
+    expect(buffer.findByTag("a")).toBeUndefined();
+  });
+
+  it("FIFO eviction removes the oldest slot first", () => {
+    const buffer = new ContextRingBuffer(70);
+
+    buffer.push("oldest", "a".repeat(100));
+    buffer.push("middle", "b".repeat(100));
+    buffer.push("newest", "c".repeat(100));
+
+    expect(buffer.findByTag("newest")).toBeDefined();
+    expect(buffer.findByTag("oldest")).toBeUndefined();
+  });
+
+  it("replaceByTag preserves position in the array", () => {
+    const buffer = new ContextRingBuffer(300);
+
+    buffer.push("first", "1111");
+    buffer.push("second", "2222");
+    buffer.push("third", "3333");
+
+    const replaced = buffer.replaceByTag("second", "2222-replaced");
+    expect(replaced).toBe(true);
+
+    const flush = buffer.flush();
+    const secondIndex = flush.indexOf("### [second]");
+    const firstIndex = flush.indexOf("### [first]");
+    const thirdIndex = flush.indexOf("### [third]");
+
+    expect(firstIndex).toBeLessThan(secondIndex);
+    expect(secondIndex).toBeLessThan(thirdIndex);
+    expect(flush).toContain("2222-replaced");
+  });
+
+  it("flush returns an empty string when the buffer is empty", () => {
+    const buffer = new ContextRingBuffer(100);
+    expect(buffer.flush()).toBe("");
+  });
+
+  it("removeByTag removes only the requested slot", () => {
+    const buffer = new ContextRingBuffer(100);
+    buffer.push("first", "1111");
+    buffer.push("second", "2222");
+
+    expect(buffer.removeByTag("first")).toBe(true);
+    expect(buffer.findByTag("first")).toBeUndefined();
+    expect(buffer.findByTag("second")).toBeDefined();
+    expect(buffer.removeByTag("missing")).toBe(false);
+  });
+
+  it("flush uses only active tags when a selection exists", () => {
+    const buffer = new ContextRingBuffer(200);
+    buffer.push("first", "1111");
+    buffer.push("second", "2222");
+    buffer.push("third", "3333");
+
+    buffer.setActiveTags(["second", "third"]);
+
+    const flush = buffer.flush();
+    expect(flush).not.toContain("### [first]");
+    expect(flush).toContain("### [second]");
+    expect(flush).toContain("### [third]");
+    expect(buffer.chatScopeSummary()).toBe("second, third");
+  });
+
+  it("clearActiveTags restores full-buffer injection", () => {
+    const buffer = new ContextRingBuffer(200);
+    buffer.push("first", "1111");
+    buffer.push("second", "2222");
+    buffer.setActiveTags(["second"]);
+
+    buffer.clearActiveTags();
+
+    const flush = buffer.flush();
+    expect(flush).toContain("### [first]");
+    expect(flush).toContain("### [second]");
+    expect(buffer.chatScopeSummary()).toBe("all buffered slots");
+  });
+
+  it("removing an active tag also removes it from the active selection", () => {
+    const buffer = new ContextRingBuffer(200);
+    buffer.push("first", "1111");
+    buffer.push("second", "2222");
+    buffer.setActiveTags(["second"]);
+
+    buffer.removeByTag("second");
+
+    expect(buffer.listActiveTags()).toEqual([]);
+    expect(buffer.hasActiveSelection()).toBe(false);
+  });
+
+  it("status reports slot count and tokens correctly", () => {
+    const buffer = new ContextRingBuffer(100);
+    buffer.push("mod", "abcd");
+
+    const status = buffer.status();
+    expect(status).toMatch(/^1 slots \| ~\d+\.\dk tokens \| active all$/);
+  });
+});

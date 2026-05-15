@@ -1,0 +1,269 @@
+# CtxPack Context Cache for VS Code
+
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=Gabryel-lima.ctxpack"><img src="https://img.shields.io/visual-studio-marketplace/v/Gabryel-lima.ctxpack?style=for-the-badge&label=Marketplace" alt="Marketplace Version" /></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=Gabryel-lima.ctxpack"><img src="https://img.shields.io/visual-studio-marketplace/d/Gabryel-lima.ctxpack?style=for-the-badge&label=Installs" alt="Marketplace Installs" /></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=Gabryel-lima.ctxpack&ssr=false#review-details"><img src="https://img.shields.io/visual-studio-marketplace/r/Gabryel-lima.ctxpack?style=for-the-badge&label=Rating" alt="Marketplace Rating" /></a>
+  <a href="https://github.com/Gabryel-lima/CtxPack"><img src="https://img.shields.io/github/stars/Gabryel-lima/CtxPack?style=for-the-badge" alt="GitHub stars" /></a>
+  <a href="https://github.com/Gabryel-lima/CtxPack/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Gabryel-lima/CtxPack?style=for-the-badge" alt="License" /></a>
+</p>
+
+CtxPack adds a FIFO context buffer to VS Code so you can accumulate only the context that matters before prompting Copilot Chat.
+
+The extension and the Python script are complementary:
+
+- The extension is for fast, session-scoped context inside VS Code.
+- The Python script is for generating portable project packs such as `.sem.ctx.md` and `.ctx.md`.
+- New extension commands can call the local `ctxpack.py` directly, so if the repository already contains the script and Python is installed, you do not need a separate installation flow.
+
+## Features
+
+- Push the current selection into a rolling context buffer.
+- Push the entire active file with one command.
+- Push a file or a directory as one reusable context slot.
+- Inspect or remove buffered slots before prompting.
+- Keep `@ctx` locked to selected slots across multiple iterations.
+- Inject accumulated context into Copilot Chat with the `@ctx` participant.
+- Generate a semantic project pack from the extension and push it straight into the buffer.
+- Generate `.sem.ctx.md`, `.ctx.md`, and `.packignore` from the extension by calling the workspace `ctxpack.py`.
+- Accept context pushes from the CtxPack CLI through IPC.
+- Evict old entries automatically with FIFO token-based limits.
+
+## What The Extension Is For
+
+Use the extension when your question depends on a small, intentional working set:
+
+- a selected function, class, or code block
+- one or two files you are actively editing
+- a semantic project digest that you want to reuse for a few chat turns
+- a curated combination of snippets gathered over several minutes
+
+Use the Python script when you need a durable artifact outside the current VS Code chat session:
+
+- export the whole project for another LLM
+- generate a readable project snapshot
+- generate a semantic DSL document to archive, share, or diff
+- rebuild project-wide context without manually pushing files one by one
+
+## When To Use `@ctx`
+
+`@ctx` should be treated as an explicit "inject my current CtxPack scope" switch.
+
+That scope now has two modes:
+
+- Full-buffer mode: `@ctx` injects every slot currently stored.
+- Active-slot mode: `@ctx` injects only the slots you selected, and keeps using that same subset on every iteration until you change it.
+
+Use `@ctx` when:
+
+- you already pushed the exact snippets the answer depends on
+- you want the same buffered context reused across multiple turns
+- you chose one or more active slots and want that exact scope preserved across iterations
+- you pushed a semantic workspace digest and now want questions answered against it
+- you want to combine several small snippets into one prompt without pasting them manually
+
+Do not use `@ctx` when:
+
+- the question is generic and does not depend on repository context
+- the current buffer is stale and still reflects an older task
+- you only need to discuss what is already visible in the current editor selection
+- you want a clean answer without unrelated buffered assumptions
+
+Practical rule:
+
+- If missing context would change the answer, use `@ctx`.
+- If context would only add noise, do not use `@ctx`.
+
+## Recommended Decision Flow
+
+1. Ask yourself whether the prompt needs repository-specific context.
+2. If yes, decide whether you need a small local slice or a project-wide digest.
+3. For a small local slice, push a selection or file.
+4. For a project-wide digest, run `Generate semantic pack and push to buffer`.
+5. If needed, run `Choose active slots for @ctx` so only the desired slots remain visible to the model across iterations.
+6. Use `@ctx` only after you confirm the current scope contains the right material.
+7. Use `Show current @ctx scope` when you want to confirm what the next turn will inject.
+8. Clear or prune the buffer when the topic changes.
+
+## Commands
+
+### How To Open The Command Palette
+
+To run CtxPack commands inside VS Code:
+
+1. Open the Command Palette with `Ctrl+Shift+P` on Linux/Windows or `Cmd+Shift+P` on macOS.
+2. Type `CtxPack`.
+3. Choose the action you want to run.
+
+If you prefer a guided entry point, run `CtxPack: Open context workflow wizard` from that same palette.
+
+- `CtxPack: Push selection to buffer`
+  Pushes the current selection. If nothing is selected, it falls back to the full active file.
+- `CtxPack: Push entire file to buffer`
+  Pushes the whole active editor content as one slot.
+- `CtxPack: Push file or directory to buffer`
+  Pushes a selected file or directory as a reusable slot. This is also available from the Explorer context menu.
+- `CtxPack: Choose active slots for @ctx`
+  Selects the exact slots that `@ctx` should inject on every iteration until changed.
+- `CtxPack: Clear active slot filter`
+  Returns `@ctx` to full-buffer mode.
+- `CtxPack: View buffer status`
+  Shows current slots, rough token estimates, and timestamps.
+- `CtxPack: Show current @ctx scope`
+  Shows whether `@ctx` is using the full buffer or only the selected subset.
+- `CtxPack: Inspect buffered slot`
+  Opens one buffered slot in a temporary preview editor so you can verify exactly what `@ctx` would inject.
+- `CtxPack: Remove buffered slot`
+  Removes one stale or noisy slot without clearing the whole session.
+- `CtxPack: Clear context buffer`
+  Resets the whole session buffer.
+- `CtxPack: Generate semantic project pack`
+  Runs `ctxpack.py <workspace> --semantic-only` and opens the resulting `.sem.ctx.md`.
+- `CtxPack: Generate readable project pack`
+  Runs `ctxpack.py <workspace> --readable --no-semantic` and opens the resulting `.ctx.md`.
+- `CtxPack: Generate semantic pack and push to buffer`
+  Runs `ctxpack.py` with `--semantic-only --push` and feeds the result directly into the session buffer for immediate `@ctx` use.
+- `CtxPack: Create .packignore template`
+  Runs `ctxpack.py <workspace> --setup` and opens the generated `.packignore`.
+- `CtxPack: Open context workflow wizard`
+  Opens one quick menu with the main push, scope, export, and cleanup flows.
+
+### Explorer Shortcuts
+
+You can also right-click directly in the VS Code Explorer:
+
+- right-click a file and run `CtxPack: Push this file to buffer`
+- right-click a folder and run `CtxPack: Push this folder to buffer`
+
+This is useful when you want `@ctx` to stay tied to a specific path without opening the file first.
+
+## Configuration
+
+- `ctxpack.maxTokens`: Buffer token limit with FIFO eviction when exceeded.
+- `ctxpack.pythonPath`: Python executable used to run `ctxpack.py` from VS Code commands.
+- `ctxpack.cliPath`: Optional explicit path to `ctxpack.py` when it is not in the workspace root.
+- `ctxpack.maxFilesPerPathPush`: Maximum number of files collected when pushing a directory as one slot.
+- `ctxpack.maxFileBytesPerPathPush`: Maximum size in bytes per file when pushing a file or directory path.
+- `ctxpack.autoInjectOnPack`: Reserved for future automation. IPC pushes already update the buffer immediately.
+
+## Zero-Friction Setup
+
+If you are working inside the CtxPack repository or another repository that contains `ctxpack.py`, the extension can call that script directly.
+
+Requirements:
+
+- Python installed and reachable from VS Code
+- `ctxpack.py` available in the workspace root, or `ctxpack.cliPath` configured manually
+
+That means the practical split is:
+
+- local chat context stays in the extension
+- full-project exports stay in Python
+- both are triggered from the same workspace when convenient
+
+## How It Works
+
+1. Push code from the active editor or from the CLI.
+2. Build up a short-lived working set in the context buffer.
+3. Optionally push a file or directory as one path-scoped slot.
+4. Optionally generate a semantic project digest through the extension when you need workspace-level context.
+5. Choose active slots when you want `@ctx` to reuse only a specific subset on every iteration.
+6. Open Copilot Chat and use `@ctx` only when you want the buffered context injected.
+7. Inspect, prune, or clear the buffer when the task changes.
+
+## Typical Workflow
+
+```text
+Select code -> CtxPack: Push selection to buffer -> Copilot Chat -> @ctx your prompt
+```
+
+You can also move up one level to project context:
+
+```text
+CtxPack: Generate semantic pack and push to buffer -> Copilot Chat -> @ctx summarize the architecture
+```
+
+You can also lock `@ctx` to one file, one directory, or a chosen group of slots:
+
+```text
+Push selection -> Push file or directory -> Choose active slots for @ctx -> @ctx continue this task
+```
+
+Or start from the Explorer without opening files first:
+
+```text
+Right-click file/folder -> Push to buffer -> Choose active slots for @ctx -> @ctx continue this task
+```
+
+Or export a project artifact for other models and tools:
+
+```text
+CtxPack: Generate semantic project pack -> open .sem.ctx.md -> share/use outside VS Code
+```
+
+You can push the current file directly:
+
+```text
+CtxPack: Push entire file to buffer
+```
+
+And you can clean the buffer surgically before asking with `@ctx`:
+
+```text
+CtxPack: Inspect buffered slot -> CtxPack: Remove buffered slot -> @ctx continue
+```
+
+If you want to confirm exactly what the next iteration will inject:
+
+```text
+CtxPack: Show current @ctx scope
+```
+
+The visual above is intentionally simple: open the Command Palette, choose the CtxPack action, and only then ask with `@ctx`.
+
+## CLI Integration
+
+CtxPack can still feed the extension buffer from the command line when you want to stay in a shell workflow:
+
+```bash
+python3 ctxpack.py . --semantic --push --push-tag current-state
+```
+
+Optional workspace override for socket resolution:
+
+```bash
+python3 ctxpack.py . --semantic --push --push-workspace /path/to/vscode/workspace
+```
+
+The new extension commands are thin wrappers around this same CLI capability. They do not replace the script; they expose it faster inside the editor.
+
+## Why Use It
+
+- Keep prompts focused instead of pasting giant files repeatedly.
+- Reuse a curated context set across multiple Copilot turns.
+- Persist a chosen subset of slots across multiple `@ctx` iterations.
+- Decide explicitly when context should or should not be injected.
+- Combine editor-driven and CLI-driven context collection.
+- Export portable semantic or readable project docs without leaving VS Code.
+- Stay within token budgets with predictable FIFO eviction.
+
+## Troubleshooting
+
+- `Generate semantic project pack` failed:
+  Confirm Python is installed and that `ctxpack.py` exists in the workspace root or in `ctxpack.cliPath`.
+- `@ctx` answered with stale assumptions:
+  Inspect old slots, change the active slot selection, or clear the active filter before retrying.
+- The buffer feels too noisy:
+  Prefer one precise selection push over multiple full-file pushes, or lock `@ctx` to selected slots only.
+- The buffer is empty:
+  Push a selection, push a file, or generate and push the semantic workspace pack before using `@ctx`.
+
+## Links
+
+- Marketplace: https://marketplace.visualstudio.com/items?itemName=Gabryel-lima.ctxpack
+- Repository: https://github.com/Gabryel-lima/CtxPack
+- Issues: https://github.com/Gabryel-lima/CtxPack/issues
+
+## Release Notes
+
+See [CHANGELOG.md](CHANGELOG.md) for version history.

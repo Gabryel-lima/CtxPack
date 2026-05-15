@@ -138,6 +138,173 @@ python3 ctxpack.py tests/prototypes --semantic-only --no-output tests/prototypes
 python3 tests/run_smoke.py
 ```
 
+## Extensão VS Code (Context Cache)
+
+O CtxPack inclui uma extensão VS Code em [vscode-extension/README.md](vscode-extension/README.md) que mantém um buffer de contexto em memória de sessão e expõe o participante de chat `@ctx`.
+
+A divisão de responsabilidade é intencional:
+
+- A extensão serve para contexto local, específico e orientado ao chat dentro do VS Code.
+- O script Python serve para exportar o projeto inteiro em formatos semântico e legível.
+- Agora a extensão também consegue chamar o `ctxpack.py` localmente, então os dois fluxos se complementam no mesmo repositório, sem exigir instalação separada além do Python.
+
+Referência visual rápida do fluxo: veja a imagem em [vscode-extension/README.md](vscode-extension/README.md).
+
+Comportamento importante:
+
+- `@ctx` não coleta arquivos sozinho.
+- `@ctx` injeta no prompt apenas o que já está no buffer.
+- O buffer só muda quando você faz push, remove slots, ou limpa a sessão.
+- Agora é possível manter o `@ctx` fixado em um subconjunto específico de slots ao longo de várias iterações.
+- `@ctx` não deve ser usado por padrão em todo prompt.
+
+### Quando usar `@ctx`
+
+Use `@ctx` quando a resposta depender de contexto já preparado no buffer, por exemplo:
+
+- a seleção ou o arquivo que você acabou de enviar
+- vários trechos acumulados para a mesma tarefa
+- um resumo semântico do workspace gerado pelo CtxPack
+- contexto específico do repositório que você não quer colar manualmente
+
+Evite `@ctx` quando:
+
+- a pergunta for genérica
+- o buffer ainda estiver carregando contexto de outra tarefa
+- você quiser uma resposta limpa, sem hipóteses extras baseadas em contexto antigo
+
+Regra prática: se o contexto muda materialmente a resposta, use `@ctx`; se só vai adicionar ruído, não use.
+
+O `@ctx` agora funciona em dois modos:
+
+- modo buffer completo: injeta todos os slots armazenados
+- modo slots ativos: injeta apenas os slots escolhidos pelo usuário, e reaproveita esse mesmo subconjunto em cada nova iteração até que ele seja alterado
+
+### Fluxo recomendado de uso
+
+1. Decida se você precisa de um trecho local ou de um panorama do projeto.
+2. Para trabalho local, faça push da seleção ou do arquivo.
+3. Para contexto do workspace inteiro, rode `CtxPack: Generate semantic pack and push to buffer`.
+4. Se quiser que a IA enxergue apenas um arquivo, diretório, ou grupo específico de slots em toda iteração, rode `CtxPack: Choose active slots for @ctx`.
+5. Inspecione ou remova slots antigos se necessário.
+6. Use `@ctx` no Copilot Chat somente depois que o buffer e o escopo ativo refletirem a tarefa atual.
+7. Ao trocar de assunto/tarefa, limpe com `ctxpack.clear` ou remova o filtro ativo.
+
+### Comandos da extensão
+
+### Como abrir o painel de comandos do VS Code
+
+Para executar os comandos do CtxPack dentro do VS Code:
+
+1. Abra a Paleta de Comandos com `Ctrl+Shift+P` no Linux/Windows ou `Cmd+Shift+P` no macOS.
+2. Digite `CtxPack`.
+3. Escolha o comando desejado.
+
+Se quiser um ponto de entrada guiado, execute `CtxPack: Open context workflow wizard` nessa mesma paleta.
+
+- `ctxpack.push`: envia a seleção, ou o arquivo inteiro se não houver seleção.
+- `ctxpack.pushFile`: envia o arquivo ativo inteiro.
+- `ctxpack.pushPath`: envia um arquivo ou diretório como um slot reutilizável. Também pode ser acionado pelo menu de contexto do Explorer.
+- `ctxpack.status`: inspeciona os slots armazenados e o uso estimado de tokens.
+- `ctxpack.selectActiveSlots`: escolhe quais slots ficam ativos para o `@ctx` em todas as iterações seguintes.
+- `ctxpack.clearActiveSelection`: volta o `@ctx` para o modo de buffer completo.
+- `ctxpack.slotScopeStatus`: mostra qual é o escopo atual que o `@ctx` vai injetar.
+- `ctxpack.inspectSlot`: abre uma prévia de um slot antes de usar `@ctx`.
+- `ctxpack.removeSlot`: remove um slot antigo sem limpar o buffer inteiro.
+- `ctxpack.clear`: limpa o buffer da sessão atual.
+- `ctxpack.exportSemantic`: gera `<workspace>.sem.ctx.md` chamando o `ctxpack.py` local.
+- `ctxpack.exportReadable`: gera `<workspace>.ctx.md` chamando o `ctxpack.py` local.
+- `ctxpack.pushWorkspaceSemantic`: gera um pacote semântico do projeto e envia o resultado ao buffer via IPC.
+- `ctxpack.createPackignore`: gera um template `.packignore` usando o `ctxpack.py` local.
+- `ctxpack.wizard`: abre um menu único com os principais fluxos de push, escopo, exportação e limpeza.
+
+### Atalhos pelo Explorer
+
+Também é possível usar o CtxPack diretamente no Explorer do VS Code:
+
+- clique com o botão direito em um arquivo e use `CtxPack: Push this file to buffer`
+- clique com o botão direito em uma pasta e use `CtxPack: Push this folder to buffer`
+
+Isso é útil quando você quer que o `@ctx` fique preso a um caminho específico sem precisar abrir o arquivo antes.
+
+### Requisitos para os comandos de projeto
+
+Os comandos de projeto reaproveitam o CLI Python do mesmo repositório ou workspace.
+
+- Python precisa estar instalado.
+- `ctxpack.py` deve existir na raiz do workspace.
+- Se ele estiver em outro lugar, configure `ctxpack.cliPath`.
+- Se `python3` não for o executável correto, configure `ctxpack.pythonPath`.
+
+### IPC do CLI para a extensão
+
+Use as flags de push para alimentar o buffer da extensão diretamente pelo terminal:
+
+```bash
+python3 ctxpack.py . --semantic --push --push-tag estado-atual
+```
+
+Se o workspace alvo for diferente do diretório usado no terminal:
+
+```bash
+python3 ctxpack.py . --semantic --push --push-workspace /caminho/do/workspace
+```
+
+Os novos comandos da extensão apenas deixam esse mesmo fluxo mais acessível dentro do VS Code.
+
+### Instalar a extensão (duas formas)
+
+#### 1) Instalar por VSIX (recomendado para uso diário)
+
+No diretório da extensão:
+
+```bash
+cd vscode-extension
+npm install
+npm run compile
+npm test
+npm run package
+code --install-extension ctxpack-context-0.1.3.vsix
+```
+
+Também é possível instalar pela interface do VS Code: Extensões -> menu `...` -> Install from VSIX...
+
+#### 2) Executar pela fonte (recomendado para desenvolvimento)
+
+1. Abra a pasta `vscode-extension` no VS Code.
+2. Rode `npm install` e `npm run compile`.
+3. Pressione `F5` para abrir um Extension Development Host.
+4. Teste os comandos e o participante `@ctx` nessa janela.
+
+### Gerar VSIX
+
+```bash
+cd vscode-extension
+npm install
+npm run compile
+npm test
+npm run package
+```
+
+Isso gera o arquivo `ctxpack-context-0.1.3.vsix`.
+
+### Dúvidas comuns
+
+1. Preciso começar todo prompt com `@ctx`?
+  Não. Só use `@ctx` nos prompts que precisam do contexto acumulado.
+2. O contexto atualiza sozinho a cada prompt?
+  Não. Faça novo push sempre que quiser refletir mudanças recentes.
+3. O buffer fica salvo para sempre?
+  Não. É memória de sessão e pode ser limpa com `ctxpack.clear`.
+4. O que acontece se o limite de tokens for atingido?
+  O buffer aplica FIFO e remove entradas antigas primeiro.
+5. Como envio o contexto semântico do projeto inteiro para o chat sem fazer push arquivo por arquivo?
+  Rode `CtxPack: Generate semantic pack and push to buffer` e depois use `@ctx`.
+6. Como exporto contexto para outra LLM em vez de usar só o chat do Copilot?
+  Rode `CtxPack: Generate semantic project pack` ou `CtxPack: Generate readable project pack`.
+7. Como garantir que a IA enxergue sempre só um arquivo, um diretório, ou alguns slots específicos em cada iteração?
+  Faça push desse conteúdo e depois use `CtxPack: Choose active slots for @ctx`.
+
 ## Atualizar o próprio script
 
 O CtxPack pode verificar o repositório canônico por atualizações e aplicá-las na instalação local.
@@ -152,7 +319,7 @@ python ctxpack.py --update
 Se a sua instalação usa uma URL remota diferente, você pode sobrescrevê-la com `--remote-url`:
 
 ```bash
-python ctxpack.py --update --remote-url git@github.com:seu/repo.git
+python ctxpack.py --update --remote-url git@github.com:Gabryel-lima/CtxPack.git
 ```
 
 ## Como Funciona

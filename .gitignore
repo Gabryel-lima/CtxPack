@@ -117,3 +117,16 @@ dmypy.json
 
 # Project-specific
 bin/
+
+# node modules
+node_modules/
+
+# VS Code extension artifacts
+vscode-extension/node_modules/
+vscode-extension/out/
+*.vsix
+
+# Generated context packs at repository root
+/*.ctx.md
+/*.sem.ctx.md
+/*.tokens.ctx.md

@@ -42,14 +42,17 @@ Examples:
     python ctxpack.py ./gfx -e c h --max-lines 500 -o gfx_context.ctx.md
 """
 
-#import os
+import os
 import sys
 import argparse
 import datetime
 import hashlib
+import json
 import math
 import re
+import socket
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 
@@ -86,6 +89,88 @@ def _normalize_path_arg(p: str | None) -> str | None:
     # Collapse repeated slashes
     s = re.sub(r'/+', '/', s)
     return s
+
+
+def _get_socket_path(workspace_root: str) -> str:
+    """Build the IPC endpoint path matching the VS Code extension hash logic."""
+    root = str(workspace_root)
+    h = hashlib.md5(root.encode("utf-8")).hexdigest()[:8]
+    if sys.platform == "win32":
+        return f"\\\\.\\pipe\\ctxpack-{h}"
+    return os.path.join(tempfile.gettempdir(), f"ctxpack-{h}.sock")
+
+
+def _push_unix(sock_path: str, tag: str, content: str) -> bool:
+    if not os.path.exists(sock_path):
+        print(_color_text(
+            f"[ctxpack] IPC: socket nao encontrado em {sock_path}\n"
+            f"[ctxpack] A extensao VS Code esta ativa?", "yellow"
+        ))
+        return False
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(5.0)
+            s.connect(sock_path)
+            payload = json.dumps({"tag": tag, "content": content}).encode("utf-8")
+            s.sendall(payload)
+            s.shutdown(socket.SHUT_WR)
+            resp = json.loads(s.recv(4096).decode("utf-8"))
+            if resp.get("ok"):
+                print(_color_text(f"[ctxpack] IPC: push OK -> tag='{tag}'", "green"))
+                return True
+            print(_color_text(f"[ctxpack] IPC: erro -> {resp.get('error')}", "red"))
+            return False
+    except Exception as e:
+        print(_color_text(f"[ctxpack] IPC: falha na conexao -> {e}", "red"))
+        return False
+
+
+def _push_via_tempfile(pipe_path: str, tag: str, content: str) -> bool:
+    """Fallback for older Windows/Python combinations without AF_UNIX support."""
+    h = pipe_path.split("-")[-1].replace(".sock", "")
+    tmp = os.path.join(tempfile.gettempdir(), f"ctxpack-{h}-push.json")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"tag": tag, "content": content}, f)
+        print(_color_text(
+            f"[ctxpack] IPC fallback: payload escrito em {tmp}\n"
+            f"[ctxpack] A extensao pode consumir esse arquivo via watch no Windows.",
+            "yellow"
+        ))
+        return True
+    except Exception as e:
+        print(_color_text(f"[ctxpack] IPC fallback falhou: {e}", "red"))
+        return False
+
+
+def _push_windows(pipe_path: str, tag: str, content: str) -> bool:
+    """Attempt Windows named pipe push via AF_UNIX and fallback to temp file."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+            s.settimeout(5.0)
+            s.connect(pipe_path)
+            payload = json.dumps({"tag": tag, "content": content}).encode("utf-8")
+            s.sendall(payload)
+            s.shutdown(socket.SHUT_WR)
+            resp = json.loads(s.recv(4096).decode("utf-8"))
+            if resp.get("ok"):
+                print(_color_text(f"[ctxpack] IPC: push OK -> tag='{tag}'", "green"))
+                return True
+            print(_color_text(f"[ctxpack] IPC: erro -> {resp.get('error')}", "red"))
+            return False
+    except (AttributeError, OSError):
+        return _push_via_tempfile(pipe_path, tag, content)
+    except Exception as e:
+        print(_color_text(f"[ctxpack] IPC: falha na conexao -> {e}", "red"))
+        return False
+
+
+def push_to_vscode(workspace_root: str, tag: str, content: str) -> bool:
+    """Send generated context to VS Code extension buffer via IPC."""
+    sock_path = _get_socket_path(workspace_root)
+    if sys.platform == "win32":
+        return _push_windows(sock_path, tag, content)
+    return _push_unix(sock_path, tag, content)
 
 # ─────────────────────────────────────────────
 # DEFAULT CONFIGURATION
@@ -723,6 +808,29 @@ def main():
         default=None,
         help="Path for the semantic output file (default: <project_name>.sem.ctx.md)"
     )
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        help=(
+            "Send generated output to the VS Code ContextRingBuffer via IPC. "
+            "Requires extension running in VS Code."
+        ),
+    )
+    parser.add_argument(
+        "--push-tag",
+        default=None,
+        metavar="TAG",
+        help="Tag for the target buffer slot (default: project directory name).",
+    )
+    parser.add_argument(
+        "--push-workspace",
+        default=None,
+        metavar="PATH",
+        help=(
+            "VS Code workspace root used to compute IPC socket path. "
+            "Default: resolved project_dir."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -885,6 +993,8 @@ def main():
     )
     args.included_files = included_files
 
+    no_content = ""
+
     if args.semantic or args.semantic_only:
         from dsl_schema import DSLContext
         from dsl_builder import build_dsl
@@ -927,6 +1037,14 @@ def main():
         print(_color_text(f"[ctxpack] Semantic DSL written to: {no_path}", "green"))
 
     if args.semantic_only:
+        if args.push:
+            workspace = args.push_workspace or str(project_dir.resolve())
+            tag = args.push_tag or project_dir.name
+            content_to_push = no_content
+            if content_to_push.strip():
+                push_to_vscode(workspace, tag, content_to_push)
+            else:
+                print(_color_text("[ctxpack] --push: nenhum conteudo gerado para enviar.", "yellow"))
         sys.exit(0)
 
     # Note: allowed_ext and extra_ignore are already defined above
@@ -980,6 +1098,23 @@ def main():
         do_embed=args.embed,
         embed_dim=args.embed_dim,
     )
+
+    if args.push:
+        workspace = args.push_workspace or str(project_dir.resolve())
+        tag = args.push_tag or project_dir.name
+
+        content_to_push = ""
+        if (args.semantic or args.semantic_only) and no_content.strip():
+            content_to_push = no_content
+        elif readable_output and readable_output.exists():
+            content_to_push = readable_output.read_text(encoding="utf-8", errors="replace")
+        elif tokens_output and tokens_output.exists():
+            content_to_push = tokens_output.read_text(encoding="utf-8", errors="replace")
+
+        if content_to_push.strip():
+            push_to_vscode(workspace, tag, content_to_push)
+        else:
+            print(_color_text("[ctxpack] --push: nenhum conteudo gerado para enviar.", "yellow"))
 
 if __name__ == "__main__":
     main()
