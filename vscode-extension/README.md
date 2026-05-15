@@ -13,8 +13,8 @@ CtxPack adds a FIFO context buffer to VS Code so you can accumulate only the con
 The extension and the Python script are complementary:
 
 - The extension is for fast, session-scoped context inside VS Code.
-- The Python script is for generating portable project packs such as `.sem.ctx.md` and `.ctx.md`.
-- New extension commands can call the local `ctxpack.py` directly, so if the repository already contains the script and Python is installed, you do not need a separate installation flow.
+- The extension now generates `.sem.ctx.md`, `.ctx.md`, and `.packignore` internally, so these project commands work even when Python is not installed.
+- The Python script remains available for CLI and automation flows outside the extension.
 
 ## Features
 
@@ -23,9 +23,10 @@ The extension and the Python script are complementary:
 - Push a file or a directory as one reusable context slot.
 - Inspect or remove buffered slots before prompting.
 - Keep `@ctx` locked to selected slots across multiple iterations.
+- Keep independent `@ctx` slot scopes for Ask, Plan, and Agent modes.
 - Inject accumulated context into Copilot Chat with the `@ctx` participant.
 - Generate a semantic project pack from the extension and push it straight into the buffer.
-- Generate `.sem.ctx.md`, `.ctx.md`, and `.packignore` from the extension by calling the workspace `ctxpack.py`.
+- Generate `.sem.ctx.md`, `.ctx.md`, and `.packignore` directly from the extension.
 - Accept context pushes from the CtxPack CLI through IPC.
 - Evict old entries automatically with FIFO token-based limits.
 
@@ -104,13 +105,13 @@ If you prefer a guided entry point, run `CtxPack: Open context workflow wizard` 
 - `CtxPack: Push file or directory to buffer`
   Pushes a selected file or directory as a reusable slot. This is also available from the Explorer context menu.
 - `CtxPack: Choose active slots for @ctx`
-  Selects the exact slots that `@ctx` should inject on every iteration until changed.
+  Selects the exact slots that `@ctx` should inject and lets you store a different scope for Ask, Plan, and Agent.
 - `CtxPack: Clear active slot filter`
   Returns `@ctx` to full-buffer mode.
 - `CtxPack: View buffer status`
   Shows current slots, rough token estimates, and timestamps.
 - `CtxPack: Show current @ctx scope`
-  Shows whether `@ctx` is using the full buffer or only the selected subset.
+  Shows the current scope for Ask, Plan, and Agent separately.
 - `CtxPack: Inspect buffered slot`
   Opens one buffered slot in a temporary preview editor so you can verify exactly what `@ctx` would inject.
 - `CtxPack: Remove buffered slot`
@@ -118,13 +119,13 @@ If you prefer a guided entry point, run `CtxPack: Open context workflow wizard` 
 - `CtxPack: Clear context buffer`
   Resets the whole session buffer.
 - `CtxPack: Generate semantic project pack`
-  Runs `ctxpack.py <workspace> --semantic-only` and opens the resulting `.sem.ctx.md`.
+  Generates `<workspace>.sem.ctx.md` inside the extension and opens it.
 - `CtxPack: Generate readable project pack`
-  Runs `ctxpack.py <workspace> --readable --no-semantic` and opens the resulting `.ctx.md`.
+  Generates `<workspace>.ctx.md` inside the extension and opens it.
 - `CtxPack: Generate semantic pack and push to buffer`
-  Runs `ctxpack.py` with `--semantic-only --push` and feeds the result directly into the session buffer for immediate `@ctx` use.
+  Generates a semantic pack inside the extension and feeds it directly into the session buffer for immediate `@ctx` use.
 - `CtxPack: Create .packignore template`
-  Runs `ctxpack.py <workspace> --setup` and opens the generated `.packignore`.
+  Creates a `.packignore` template inside the extension and opens it.
 - `CtxPack: Open context workflow wizard`
   Opens one quick menu with the main push, scope, export, and cleanup flows.
 
@@ -140,26 +141,24 @@ This is useful when you want `@ctx` to stay tied to a specific path without open
 ## Configuration
 
 - `ctxpack.maxTokens`: Buffer token limit with FIFO eviction when exceeded.
-- `ctxpack.pythonPath`: Python executable used to run `ctxpack.py` from VS Code commands.
-- `ctxpack.cliPath`: Optional explicit path to `ctxpack.py` when it is not in the workspace root.
 - `ctxpack.maxFilesPerPathPush`: Maximum number of files collected when pushing a directory as one slot.
 - `ctxpack.maxFileBytesPerPathPush`: Maximum size in bytes per file when pushing a file or directory path.
 - `ctxpack.autoInjectOnPack`: Reserved for future automation. IPC pushes already update the buffer immediately.
 
 ## Zero-Friction Setup
 
-If you are working inside the CtxPack repository or another repository that contains `ctxpack.py`, the extension can call that script directly.
+The extension project commands no longer depend on Python or on a local `ctxpack.py` copy.
 
 Requirements:
 
-- Python installed and reachable from VS Code
-- `ctxpack.py` available in the workspace root, or `ctxpack.cliPath` configured manually
+- VS Code with the CtxPack extension installed
+- A workspace folder open when generating project-level packs
 
 That means the practical split is:
 
 - local chat context stays in the extension
-- full-project exports stay in Python
-- both are triggered from the same workspace when convenient
+- project-level exports also stay in the extension
+- the Python CLI remains optional for external automation and IPC workflows
 
 ## How It Works
 
@@ -250,7 +249,7 @@ The new extension commands are thin wrappers around this same CLI capability. Th
 ## Troubleshooting
 
 - `Generate semantic project pack` failed:
-  Confirm Python is installed and that `ctxpack.py` exists in the workspace root or in `ctxpack.cliPath`.
+  Confirm that a workspace folder is open and the extension can read the project files.
 - `@ctx` answered with stale assumptions:
   Inspect old slots, change the active slot selection, or clear the active filter before retrying.
 - The buffer feels too noisy:

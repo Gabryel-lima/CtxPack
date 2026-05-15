@@ -154,7 +154,7 @@ The intended split is explicit:
 
 - The extension is optimized for local, task-scoped, chat-focused context.
 - The Python script is optimized for whole-project export in semantic or readable formats.
-- The extension can now call the local `ctxpack.py` directly, so both parts work together from the same repository when Python is already installed.
+- The extension now generates project packs internally, so these commands work without Python or a local `ctxpack.py` copy.
 
 Visual flow reference: see the extension guide image in [vscode-extension/README.md](vscode-extension/README.md).
 
@@ -215,10 +215,10 @@ If you want a guided flow, run `CtxPack: Open context workflow wizard` from the 
 - `ctxpack.inspectSlot`: preview one buffered slot before using `@ctx`.
 - `ctxpack.removeSlot`: remove a stale slot without clearing the whole buffer.
 - `ctxpack.clear`: clear the current session buffer.
-- `ctxpack.exportSemantic`: generate `<workspace>.sem.ctx.md` by calling the local `ctxpack.py`.
-- `ctxpack.exportReadable`: generate `<workspace>.ctx.md` by calling the local `ctxpack.py`.
+- `ctxpack.exportSemantic`: generate `<workspace>.sem.ctx.md` inside the extension.
+- `ctxpack.exportReadable`: generate `<workspace>.ctx.md` inside the extension.
 - `ctxpack.pushWorkspaceSemantic`: generate a semantic project pack and send it to the extension buffer through IPC.
-- `ctxpack.createPackignore`: generate a `.packignore` template through the local `ctxpack.py`.
+- `ctxpack.createPackignore`: generate a `.packignore` template inside the extension.
 - `ctxpack.wizard`: open one quick menu for push, scope selection, export, and cleanup actions.
 
 ### Explorer shortcuts
@@ -230,12 +230,10 @@ You can also right-click in the VS Code Explorer:
 
 ### Extension requirements for project commands
 
-The project-level commands reuse the Python CLI from the same repository or workspace.
+The project-level commands run inside the extension itself.
 
-- Python must be installed.
-- `ctxpack.py` should exist in the workspace root.
-- If it lives elsewhere, configure `ctxpack.cliPath`.
-- If `python3` is not the correct executable, configure `ctxpack.pythonPath`.
+- Open the target workspace folder in VS Code.
+- Ensure the extension can read the relevant files in that workspace.
 
 ### IPC from CLI to extension
 

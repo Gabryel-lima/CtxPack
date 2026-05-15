@@ -7,11 +7,18 @@ import {
   getWorkspaceDefaultTag,
   getWorkspaceRootOrWarn,
   promptForOptionalNow,
-  runCtxpack,
 } from "./CliBridge";
 import { ContextRingBuffer } from "./ContextRingBuffer";
 import { createIpcServer, getSocketPath } from "./IpcServer";
 import { buildPathContext, pickPath } from "./PathContextBuilder";
+import {
+  createPackignoreTemplate,
+  createReadablePack,
+  createSemanticPack,
+  CtxChatMode,
+  getCtxChatModeLabel,
+  listCtxChatModes,
+} from "./WorkspacePackBuilder";
 
 let statusBar: vscode.StatusBarItem | undefined;
 let ipcServer: net.Server | undefined;
@@ -62,9 +69,33 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    buffer.setActiveTags([tag]);
+    buffer.setActiveTags([tag], "all");
     updateStatusBar();
-    vscode.window.showInformationMessage(`CtxPack: @ctx is now scoped to '${tag}'.`);
+    vscode.window.showInformationMessage(`CtxPack: @ctx is now scoped to '${tag}' for ask, plan, and agent.`);
+  };
+
+  const pickTargetModes = async (): Promise<CtxChatMode[] | undefined> => {
+    const picked = await vscode.window.showQuickPick(
+      [
+        { label: "All modes", value: "all" },
+        ...listCtxChatModes().map((mode) => ({ label: getCtxChatModeLabel(mode), value: mode })),
+      ],
+      {
+        title: "CtxPack: choose which chat modes should use this scope",
+        placeHolder: "Apply the current slot scope to Ask, Plan, Agent, or all modes",
+        canPickMany: true,
+      }
+    );
+
+    if (!picked) {
+      return undefined;
+    }
+
+    if (picked.some((item) => item.value === "all")) {
+      return listCtxChatModes();
+    }
+
+    return picked.map((item) => item.value as CtxChatMode);
   };
 
   const pickSlots = async (title: string, placeHolder: string): Promise<string[] | undefined> => {
@@ -74,7 +105,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return undefined;
     }
 
-    const activeTags = new Set(buffer.listActiveTags());
+    const activeTags = new Set(buffer.listActiveTags("ask"));
     const picks = await vscode.window.showQuickPick(
       slots.map((slot) => ({
         label: slot.tag,
@@ -219,22 +250,31 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    if (tags.length === 0) {
-      buffer.clearActiveTags();
-      updateStatusBar();
-      vscode.window.showInformationMessage("CtxPack: @ctx now uses all buffered slots.");
+    const modes = await pickTargetModes();
+    if (!modes) {
       return;
     }
 
-    buffer.setActiveTags(tags);
+    if (tags.length === 0) {
+      for (const mode of modes) {
+        buffer.clearActiveTags(mode);
+      }
+      updateStatusBar();
+      vscode.window.showInformationMessage("CtxPack: selected mode(s) now use all buffered slots.");
+      return;
+    }
+
+    for (const mode of modes) {
+      buffer.setActiveTags(tags, mode);
+    }
     updateStatusBar();
-    vscode.window.showInformationMessage(`CtxPack: @ctx now uses ${tags.length} selected slot(s).`);
+    vscode.window.showInformationMessage(`CtxPack: updated ${modes.length} mode(s) to use ${tags.length} selected slot(s).`);
   });
 
   const clearActiveSelectionDisposable = vscode.commands.registerCommand("ctxpack.clearActiveSelection", () => {
-    buffer.clearActiveTags();
+    buffer.clearActiveTags("all");
     updateStatusBar();
-    vscode.window.showInformationMessage("CtxPack: active slot filter cleared. @ctx will use all buffered slots.");
+    vscode.window.showInformationMessage("CtxPack: active slot filter cleared for ask, plan, and agent.");
   });
 
   const statusDisposable = vscode.commands.registerCommand("ctxpack.status", async () => {
@@ -328,9 +368,11 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const slotScopeStatusDisposable = vscode.commands.registerCommand("ctxpack.slotScopeStatus", () => {
-    const scope = buffer.chatScopeSummary();
-    const mode = buffer.hasActiveSelection() ? "selected slots" : "full buffer";
-    vscode.window.showInformationMessage(`CtxPack: @ctx scope is ${mode}: ${scope}.`);
+    const summaries = buffer.getModeScopeSummary();
+    const message = listCtxChatModes()
+      .map((mode) => `${getCtxChatModeLabel(mode)}: ${buffer.hasActiveSelection(mode) ? summaries[mode] : "all buffered slots"}`)
+      .join(" | ");
+    vscode.window.showInformationMessage(`CtxPack: @ctx scope by mode -> ${message}.`);
   });
 
   const exportSemanticDisposable = vscode.commands.registerCommand("ctxpack.exportSemantic", async () => {
@@ -344,19 +386,17 @@ export function activate(context: vscode.ExtensionContext): void {
       return;
     }
 
-    const args = [workspaceRoot, "--semantic-only"];
-    if (nowText.trim()) {
-      args.push("--now", nowText.trim());
-    }
-
     try {
-      await runCtxpack({
-        title: "CtxPack: generating semantic pack",
-        workspaceRoot,
-        args,
-      });
+      const built = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "CtxPack: generating semantic pack",
+          cancellable: false,
+        },
+        async () => createSemanticPack(workspaceRoot, { nowText: nowText.trim() || undefined })
+      );
 
-      const outputPath = path.join(workspaceRoot, `${path.basename(workspaceRoot)}.sem.ctx.md`);
+      const outputPath = built.outputPath;
       const doc = await vscode.workspace.openTextDocument(outputPath);
       await vscode.window.showTextDocument(doc);
       vscode.window.showInformationMessage("CtxPack: semantic pack generated.");
@@ -372,13 +412,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     try {
-      await runCtxpack({
-        title: "CtxPack: generating readable project pack",
-        workspaceRoot,
-        args: [workspaceRoot, "--readable", "--no-semantic"],
-      });
+      const built = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "CtxPack: generating readable project pack",
+          cancellable: false,
+        },
+        async () => createReadablePack(workspaceRoot)
+      );
 
-      const outputPath = path.join(workspaceRoot, `${path.basename(workspaceRoot)}.ctx.md`);
+      const outputPath = built.outputPath;
       const doc = await vscode.workspace.openTextDocument(outputPath);
       await vscode.window.showTextDocument(doc);
       vscode.window.showInformationMessage("CtxPack: readable pack generated.");
@@ -413,26 +456,17 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      const args = [
-        workspaceRoot,
-        "--semantic-only",
-        "--push",
-        "--push-workspace",
-        workspaceRoot,
-        "--push-tag",
-        tag.trim() || defaultTag,
-      ];
-
-      if (nowText.trim()) {
-        args.push("--now", nowText.trim());
-      }
-
       try {
-        await runCtxpack({
-          title: "CtxPack: generating and pushing semantic pack",
-          workspaceRoot,
-          args,
-        });
+        const built = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: "CtxPack: generating and pushing semantic pack",
+            cancellable: false,
+          },
+          async () => createSemanticPack(workspaceRoot, { nowText: nowText.trim() || undefined })
+        );
+
+        buffer.push(tag.trim() || defaultTag, built.content);
 
         updateStatusBar();
         vscode.window.showInformationMessage(
@@ -452,13 +486,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }
 
     try {
-      await runCtxpack({
-        title: "CtxPack: creating .packignore template",
-        workspaceRoot,
-        args: [workspaceRoot, "--setup"],
-      });
+      const built = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "CtxPack: creating .packignore template",
+          cancellable: false,
+        },
+        async () => createPackignoreTemplate(workspaceRoot)
+      );
 
-      const targetPath = path.join(workspaceRoot, ".packignore");
+      const targetPath = built.outputPath;
       const doc = await vscode.workspace.openTextDocument(targetPath);
       await vscode.window.showTextDocument(doc);
       vscode.window.showInformationMessage("CtxPack: .packignore template is ready.");

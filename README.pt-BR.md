@@ -146,7 +146,7 @@ A divisão de responsabilidade é intencional:
 
 - A extensão serve para contexto local, específico e orientado ao chat dentro do VS Code.
 - O script Python serve para exportar o projeto inteiro em formatos semântico e legível.
-- Agora a extensão também consegue chamar o `ctxpack.py` localmente, então os dois fluxos se complementam no mesmo repositório, sem exigir instalação separada além do Python.
+- Agora a extensão gera os pacotes de projeto internamente, então esses comandos funcionam sem Python e sem um `ctxpack.py` local.
 
 Referência visual rápida do fluxo: veja a imagem em [vscode-extension/README.md](vscode-extension/README.md).
 
@@ -212,10 +212,10 @@ Se quiser um ponto de entrada guiado, execute `CtxPack: Open context workflow wi
 - `ctxpack.inspectSlot`: abre uma prévia de um slot antes de usar `@ctx`.
 - `ctxpack.removeSlot`: remove um slot antigo sem limpar o buffer inteiro.
 - `ctxpack.clear`: limpa o buffer da sessão atual.
-- `ctxpack.exportSemantic`: gera `<workspace>.sem.ctx.md` chamando o `ctxpack.py` local.
-- `ctxpack.exportReadable`: gera `<workspace>.ctx.md` chamando o `ctxpack.py` local.
+- `ctxpack.exportSemantic`: gera `<workspace>.sem.ctx.md` dentro da extensão.
+- `ctxpack.exportReadable`: gera `<workspace>.ctx.md` dentro da extensão.
 - `ctxpack.pushWorkspaceSemantic`: gera um pacote semântico do projeto e envia o resultado ao buffer via IPC.
-- `ctxpack.createPackignore`: gera um template `.packignore` usando o `ctxpack.py` local.
+- `ctxpack.createPackignore`: gera um template `.packignore` dentro da extensão.
 - `ctxpack.wizard`: abre um menu único com os principais fluxos de push, escopo, exportação e limpeza.
 
 ### Atalhos pelo Explorer
@@ -229,12 +229,10 @@ Isso é útil quando você quer que o `@ctx` fique preso a um caminho específic
 
 ### Requisitos para os comandos de projeto
 
-Os comandos de projeto reaproveitam o CLI Python do mesmo repositório ou workspace.
+Os comandos de projeto agora rodam dentro da própria extensão.
 
-- Python precisa estar instalado.
-- `ctxpack.py` deve existir na raiz do workspace.
-- Se ele estiver em outro lugar, configure `ctxpack.cliPath`.
-- Se `python3` não for o executável correto, configure `ctxpack.pythonPath`.
+- Abra a pasta do workspace no VS Code.
+- Garanta que a extensão possa ler os arquivos relevantes desse workspace.
 
 ### IPC do CLI para a extensão
 

@@ -110,4 +110,55 @@ describe("ContextRingBuffer", () => {
     const status = buffer.status();
     expect(status).toMatch(/^1 slots \| ~\d+\.\dk tokens \| active all$/);
   });
+
+  it("keeps active selections isolated per chat mode", () => {
+    const buffer = new ContextRingBuffer(200);
+    buffer.push("first", "1111");
+    buffer.push("second", "2222");
+
+    buffer.setActiveTags(["second"], "agent");
+
+    expect(buffer.flush("agent")).toContain("### [second]");
+    expect(buffer.flush("agent")).not.toContain("### [first]");
+    expect(buffer.flush("ask")).toContain("### [first]");
+    expect(buffer.flush("ask")).toContain("### [second]");
+  });
+
+  it("clears only the requested mode selection", () => {
+    const buffer = new ContextRingBuffer(200);
+    buffer.push("first", "1111");
+    buffer.push("second", "2222");
+    buffer.setActiveTags(["second"], "plan");
+    buffer.setActiveTags(["first"], "agent");
+
+    buffer.clearActiveTags("plan");
+
+    expect(buffer.hasActiveSelection("plan")).toBe(false);
+    expect(buffer.hasActiveSelection("agent")).toBe(true);
+    expect(buffer.listActiveTags("agent")).toEqual(["first"]);
+  });
+
+  it("buildPromptContext keeps recent slots inside a budget", () => {
+    const buffer = new ContextRingBuffer(500);
+    buffer.push("oldest", "a".repeat(160));
+    buffer.push("middle", "b".repeat(160));
+    buffer.push("newest", "c".repeat(160));
+
+    const payload = buffer.buildPromptContext("ask", 90);
+
+    expect(payload.usedTags).toContain("newest");
+    expect(payload.omittedTags.length).toBeGreaterThan(0);
+    expect(payload.estimatedTokens).toBeLessThanOrEqual(100);
+  });
+
+  it("buildPromptContext truncates a single large slot to fit the budget", () => {
+    const buffer = new ContextRingBuffer(500);
+    buffer.push("semantic", "x".repeat(1000));
+
+    const payload = buffer.buildPromptContext("ask", 40);
+
+    expect(payload.usedTags).toEqual(["semantic"]);
+    expect(payload.content).toContain("[... truncated for prompt budget ...]");
+    expect(payload.estimatedTokens).toBeLessThanOrEqual(60);
+  });
 });

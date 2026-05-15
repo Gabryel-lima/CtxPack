@@ -2,7 +2,7 @@
   "name": "ctxpack",
   "displayName": "CtxPack",
   "description": "FIFO context buffer for Copilot Chat in VS Code",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "publisher": "Gabryel-lima",
   "icon": "assets/ctxpack.png",
   "license": "MIT",
@@ -146,16 +146,6 @@
           "default": 8000,
           "description": "Buffer token limit (FIFO eviction when exceeded)"
         },
-        "ctxpack.pythonPath": {
-          "type": "string",
-          "default": "python3",
-          "description": "Python executable used to run ctxpack.py from project commands"
-        },
-        "ctxpack.cliPath": {
-          "type": "string",
-          "default": "",
-          "description": "Optional explicit path to ctxpack.py when it is not in the workspace root"
-        },
         "ctxpack.maxFilesPerPathPush": {
           "type": "number",
           "default": 25,
@@ -180,6 +170,9 @@
     "lint": "echo 'Lint not configured yet'",
     "test": "jest",
     "package": "npx @vscode/vsce package"
+  },
+  "dependencies": {
+    "@vscode/chat-extension-utils": "0.0.0-alpha.5"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

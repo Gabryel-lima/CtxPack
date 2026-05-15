@@ -2,6 +2,18 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 0.1.5
+
+- Made `@ctx` context injection budget-aware so large semantic buffers are trimmed to the active model capacity instead of increasing the chance of interrupted requests.
+- Strengthened the participant prompt so buffered semantic context is treated as primary workspace evidence and not silently ignored.
+- Returned the underlying `ChatResult` metadata from the chat utility flow so tool-calling and request lifecycle handling remain intact.
+
+## 0.1.4
+
+- Replaced Python-dependent extension project commands with embedded generation for `.sem.ctx.md`, `.ctx.md`, and `.packignore`.
+- Added mode-aware `@ctx` scoping so Ask, Plan, and Agent can keep different active slot selections.
+- Updated extension documentation and tests to match the embedded project-pack workflow.
+
 ## 0.1.3
 
 - Added a visual quick-flow asset showing the Command Palette to `@ctx` workflow.
