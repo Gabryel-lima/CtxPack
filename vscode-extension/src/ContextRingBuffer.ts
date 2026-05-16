@@ -193,6 +193,13 @@ export class ContextRingBuffer {
   }
 
   /**
+   * Returns the current aggregate token estimate across all slots.
+   */
+  public totalTokenEstimate(): number {
+    return this.totalTokens();
+  }
+
+  /**
    * Replaces the content of an existing tag without changing its FIFO position.
    */
   public replaceByTag(tag: string, content: string): boolean {

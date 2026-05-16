@@ -1,6 +1,14 @@
 # Changelog
 
 All notable changes to this extension will be documented in this file.
+
+## 0.1.17
+
+- **Compacted session status in the status bar**: replaced long status text with a shorter, stable format (`ctx {slots}s ~{tokens}k {badge}`) to reduce truncation and improve visibility.
+- **Deterministic buffer-use confirmation**: UI confirmation now relies on an internal injection-pipeline signal (`bufferAttached`) instead of lexical overlap or tool/event side effects.
+- **Clear sent-state differentiation**: tooltip now distinguishes between `buffer attached` and `request sent without attachment` (for empty scope or budget constraints).
+- **Telemetry consistency update**: status badges now map directly to injection phases (`📦`, `⏳`, `🔗`, `✅`, `❌`, `➡️`) for faster visual parsing.
+
 ## 0.1.16
 
 - **Reinforced visual feedback for buffer injection**: Status bar now shows persistent, high-contrast indicators: `⏳ READING BUFFER`, `🔗 CORRELATING SLOTS`, `✅ BUFFER INJECTED (N slot(s))`, and `❌ BUFFER ERROR`.
@@ -8,7 +16,8 @@ All notable changes to this extension will be documented in this file.
 - **Improved tooltip clarity**: Tooltip now explicitly states `✅ BUFFER ACCESS CONFIRMED` or `❌ BUFFER ACCESS FAILED` with detailed status for each injection phase.
 - **Enhanced status bar persistence**: Status bar remains visible and updates throughout all injection phases (reading → correlating → sent), ensuring users always see buffer access confirmation.
 - **Updated empty buffer guidance**: Guide now clarifies that `@ctx` is for CtxPack-specific help and suggestions, while normal prompts do NOT require any prefix and automatically inject buffered context.
-## 0.1.14
+
+## 0.1.15
 
 - Removed remaining UX ambiguity around `@ctx`: the participant guidance now explicitly states that no `@ctx` prefix is needed after the participant is sticky.
 - Added explicit chat-side confirmation line in each injection report: `Buffer access: confirmed`.

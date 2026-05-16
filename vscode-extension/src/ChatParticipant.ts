@@ -14,6 +14,7 @@ export interface CtxInjectionSnapshot {
   modeSource: "request" | "context" | "fallback";
   scopeLabel: string;
   usedTags: string[];
+  bufferAttached: boolean;
   omittedTags: string[];
   correlatedSlots: Array<{ tag: string; score: number; matchedTerms: string[] }>;
   estimatedTokens: number;
@@ -40,6 +41,7 @@ export function registerChatParticipant(
           modeSource: "fallback",
           scopeLabel: "n/a",
           usedTags: [],
+          bufferAttached: false,
           omittedTags: [],
           correlatedSlots: [],
           estimatedTokens: 0,
@@ -76,6 +78,7 @@ export function registerChatParticipant(
         modeSource: modeResolution.source,
         scopeLabel,
         usedTags: promptContext.usedTags,
+        bufferAttached: promptContext.usedTags.length > 0,
         omittedTags: promptContext.omittedTags,
         correlatedSlots: correlations,
         estimatedTokens: promptContext.estimatedTokens,

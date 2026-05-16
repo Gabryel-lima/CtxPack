@@ -49,8 +49,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!statusBar) {
       return;
     }
-    const suffix = formatInjectionSuffix(lastInjectionSnapshot);
-    statusBar.text = overrideText ?? `$(database) ctx: ${buffer.status()}${suffix}`;
+    statusBar.text = overrideText ?? buildCompactStatusText(buffer, lastInjectionSnapshot);
     statusBar.tooltip = buildStatusTooltip(buffer, lastInjectionSnapshot);
     statusBar.show();
     // Ensure status bar remains visible during all state transitions
@@ -615,28 +614,34 @@ export function deactivate(): void {
 
 function formatInjectionSuffix(snapshot: CtxInjectionSnapshot | undefined): string {
   if (!snapshot) {
-    return "";
+    return "📦";
   }
 
   if (snapshot.status === "error") {
-    return " | ❌ BUFFER ERROR";
+    return "❌";
   }
 
   if (snapshot.status === "reading") {
-    return " | ⏳ READING BUFFER";
+    return "⏳";
   }
 
   if (snapshot.status === "correlating") {
-    return " | 🔗 CORRELATING SLOTS";
+    return "🔗";
   }
 
   if (snapshot.status === "sent") {
-    return snapshot.usedTags.length > 0
-      ? ` | ✅ BUFFER INJECTED (${snapshot.usedTags.length} slot(s))`
-      : " | ✅ REQUEST SENT";
+    return snapshot.bufferAttached ? "✅" : "➡️";
   }
 
-  return ` | 📦 BUFFER READY (${snapshot.usedTags.length} slot(s))`;
+  return "📦";
+}
+
+function buildCompactStatusText(buffer: ContextRingBuffer, snapshot: CtxInjectionSnapshot | undefined): string {
+  const slots = buffer.listSlots().length;
+  const totalTokens = buffer.totalTokenEstimate();
+  const tokenK = (totalTokens / 1000).toFixed(1);
+  const badge = formatInjectionSuffix(snapshot);
+  return `$(database) ctx ${slots}s ~${tokenK}k ${badge}`;
 }
 
 function buildStatusTooltip(buffer: ContextRingBuffer, snapshot: CtxInjectionSnapshot | undefined): string {
@@ -661,10 +666,13 @@ function buildStatusTooltip(buffer: ContextRingBuffer, snapshot: CtxInjectionSna
   lines.push("");
   
   if (snapshot.status === "sent") {
-    lines.push("✅ BUFFER ACCESS CONFIRMED");
-    lines.push(snapshot.usedTags.length > 0 
-      ? `Buffer context was SUCCESSFULLY INJECTED into the model (${snapshot.usedTags.length} slot(s)).`
-      : "Request sent - buffer is available for injection.");
+    if (snapshot.bufferAttached) {
+      lines.push("✅ BUFFER ACCESS CONFIRMED");
+      lines.push(`Confirmation source: injection pipeline attached ${snapshot.usedTags.length} slot(s) to this request.`);
+    } else {
+      lines.push("ℹ️ REQUEST SENT WITHOUT BUFFER ATTACHMENT");
+      lines.push("No slots were attached to this request (empty scope or budget constraints).");
+    }
   } else if (snapshot.status === "error") {
     lines.push("❌ BUFFER ACCESS FAILED");
     lines.push(`Error: ${snapshot.errorMessage ?? "unknown error"}`);
