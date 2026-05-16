@@ -22,10 +22,12 @@ The extension and the Python script are complementary:
 - Push the entire active file with one command.
 - Push a file or a directory as one reusable context slot.
 - Inspect or remove buffered slots before prompting.
-- Keep `@ctx` locked to selected slots across multiple iterations.
+- Keep dynamic context locked to selected slots across multiple iterations.
 - Apply selected active slots as the effective context source across Ask, Plan, and Agent.
-- Inject accumulated context into Copilot Chat with the `@ctx` participant.
+- Inject accumulated context into Copilot Chat dynamically through the CtxPack participant.
 - Show an in-chat injection report and status bar telemetry so slot usage is visually verifiable.
+- Show explicit context-read phases (`reading buffered slots` and `correlating prompt intent`) while the model is reasoning.
+- Show a slot-correlation table that highlights which slots most overlap with the current prompt.
 - Generate a semantic project pack from the extension and push it straight into the buffer.
 - Generate `.sem.ctx.md`, `.ctx.md`, and `.packignore` directly from the extension.
 - Accept context pushes from the CtxPack CLI through IPC.
@@ -47,20 +49,20 @@ Use the Python script when you need a durable artifact outside the current VS Co
 - generate a semantic DSL document to archive, share, or diff
 - rebuild project-wide context without manually pushing files one by one
 
-## When To Use `@ctx`
+## Dynamic Context Injection
 
-`@ctx` should be treated as an explicit "inject my current CtxPack scope" switch.
+CtxPack now injects buffered context dynamically when using the CtxPack chat participant.
 
-`@ctx` is explicit per prompt. If you want CtxPack injection again in the next message, type `@ctx` again.
+You no longer need to prepend prompts with `@ctx` for repeated injections.
 
-That scope now has two modes:
+The scope has two modes:
 
-- Full-buffer mode: `@ctx` injects every slot currently stored.
-- Active-slot mode: `@ctx` injects only the slots you selected, and keeps using that same subset on every iteration until you change it.
+- Full-buffer mode: injects every slot currently stored.
+- Active-slot mode: injects only the slots you selected, and keeps using that same subset on every iteration until you change it.
 
 When active slots are selected, that selected subset is treated as the effective scope across Ask, Plan, and Agent.
 
-Use `@ctx` when:
+Use dynamic injection when:
 
 - you already pushed the exact snippets the answer depends on
 - you want the same buffered context reused across multiple turns
@@ -68,7 +70,7 @@ Use `@ctx` when:
 - you pushed a semantic workspace digest and now want questions answered against it
 - you want to combine several small snippets into one prompt without pasting them manually
 
-Do not use `@ctx` when:
+Avoid dynamic injection when:
 
 - the question is generic and does not depend on repository context
 - the current buffer is stale and still reflects an older task
@@ -77,8 +79,8 @@ Do not use `@ctx` when:
 
 Practical rule:
 
-- If missing context would change the answer, use `@ctx`.
-- If context would only add noise, do not use `@ctx`.
+- If missing context would change the answer, keep context injection enabled.
+- If context would only add noise, clear or narrow the active slots first.
 
 ## Copilot Chat Modes
 
@@ -94,21 +96,21 @@ CtxPack respects the current Copilot Chat mode and adapts tool availability acco
 - **Purpose**: Autonomous task execution (coding, refactoring, debugging)
 - **Context**: CtxPack context is injected and used for tool-driven workflows
 - **Tools**: ✅ Full tool access (file operations, searches, code generation)
-- **Use `@ctx`**: When you want the model to autonomously work with your buffered context
+- **Use case**: When you want the model to autonomously work with your buffered context
 
 ### Ask Mode
 - **Purpose**: Direct answers and questions about code
 - **Context**: CtxPack context is injected as grounded workspace evidence
 - **Tools**: ✅ Tools available for natural use (e.g., file lookups, searches when helpful)
-- **Use `@ctx`**: When you want answers about code in your buffer, or quick clarifications
+- **Use case**: When you want answers about code in your buffer, or quick clarifications
 
 ### Plan Mode
 - **Purpose**: Strategic planning and architecture discussion
 - **Context**: CtxPack context is injected for reference
 - **Tools**: ❌ No tools (read-only mode for planning without side effects)
-- **Use `@ctx`**: When planning changes and want context without triggering tool execution
+- **Use case**: When planning changes and want context without triggering tool execution
 
-The active-slot selection (chosen via `CtxPack: Choose active slots for @ctx`) applies consistently across all modes.
+The active-slot selection (chosen via `CtxPack: Choose active slots for dynamic context`) applies consistently across all modes.
 
 ## Recommended Decision Flow
 
@@ -116,9 +118,9 @@ The active-slot selection (chosen via `CtxPack: Choose active slots for @ctx`) a
 2. If yes, decide whether you need a small local slice or a project-wide digest.
 3. For a small local slice, push a selection or file.
 4. For a project-wide digest, run `Generate semantic pack and push to buffer`.
-5. If needed, run `Choose active slots for @ctx` so only the desired slots remain visible to the model across iterations.
-6. Use `@ctx` only after you confirm the current scope contains the right material.
-7. Use `Show current @ctx scope` when you want to confirm what the next turn will inject.
+5. If needed, run `Choose active slots for dynamic context` so only the desired slots remain visible to the model across iterations.
+6. Confirm scope before asking.
+7. Use `Show current dynamic context scope` when you want to confirm what the next turn will inject.
 8. Clear or prune the buffer when the topic changes.
 
 ## Commands
@@ -139,16 +141,16 @@ If you prefer a guided entry point, run `CtxPack: Open context workflow wizard` 
   Pushes the whole active editor content as one slot.
 - `CtxPack: Push file or directory to buffer`
   Pushes a selected file or directory as a reusable slot. This is also available from the Explorer context menu.
-- `CtxPack: Choose active slots for @ctx`
-  Selects the exact slots that `@ctx` should inject as the effective scope across Ask, Plan, and Agent.
+- `CtxPack: Choose active slots for dynamic context`
+  Selects the exact slots that dynamic injection should use as the effective scope across Ask, Plan, and Agent.
 - `CtxPack: Clear active slot filter`
-  Returns `@ctx` to full-buffer mode.
+  Returns injection to full-buffer mode.
 - `CtxPack: View buffer status`
   Shows current slots, rough token estimates, and timestamps.
-- `CtxPack: Show current @ctx scope`
+- `CtxPack: Show current dynamic context scope`
   Shows the current scope that the participant will inject.
 - `CtxPack: Inspect buffered slot`
-  Opens one buffered slot in a temporary preview editor so you can verify exactly what `@ctx` would inject.
+  Opens one buffered slot in a temporary preview editor so you can verify exactly what will be injected.
 - `CtxPack: Remove buffered slot`
   Removes one stale or noisy slot without clearing the whole session.
 - `CtxPack: Clear context buffer`
@@ -158,7 +160,7 @@ If you prefer a guided entry point, run `CtxPack: Open context workflow wizard` 
 - `CtxPack: Generate readable project pack`
   Generates `<workspace>.ctx.md` inside the extension and opens it.
 - `CtxPack: Generate semantic pack and push to buffer`
-  Generates a semantic pack inside the extension and feeds it directly into the session buffer for immediate `@ctx` use.
+  Generates a semantic pack inside the extension and feeds it directly into the session buffer for immediate context use.
 - `CtxPack: Create .packignore template`
   Creates a `.packignore` template inside the extension and opens it.
 - `CtxPack: Open context workflow wizard`
@@ -171,7 +173,7 @@ You can also right-click directly in the VS Code Explorer:
 - right-click a file and run `CtxPack: Push this file to buffer`
 - right-click a folder and run `CtxPack: Push this folder to buffer`
 
-This is useful when you want `@ctx` to stay tied to a specific path without opening the file first.
+This is useful when you want dynamic context to stay tied to a specific path without opening the file first.
 
 ## Configuration
 
@@ -201,32 +203,32 @@ That means the practical split is:
 2. Build up a short-lived working set in the context buffer.
 3. Optionally push a file or directory as one path-scoped slot.
 4. Optionally generate a semantic project digest through the extension when you need workspace-level context.
-5. Choose active slots when you want `@ctx` to reuse only a specific subset on every iteration.
-6. Open Copilot Chat and use `@ctx` only when you want the buffered context injected.
+5. Choose active slots when you want injection to reuse only a specific subset on every iteration.
+6. Open Copilot Chat with the CtxPack participant and prompt normally.
 7. Inspect, prune, or clear the buffer when the task changes.
 
 ## Typical Workflow
 
 ```text
-Select code -> CtxPack: Push selection to buffer -> Copilot Chat -> @ctx your prompt
+Select code -> CtxPack: Push selection to buffer -> Copilot Chat (CtxPack participant) -> your prompt
 ```
 
 You can also move up one level to project context:
 
 ```text
-CtxPack: Generate semantic pack and push to buffer -> Copilot Chat -> @ctx summarize the architecture
+CtxPack: Generate semantic pack and push to buffer -> Copilot Chat (CtxPack participant) -> summarize the architecture
 ```
 
-You can also lock `@ctx` to one file, one directory, or a chosen group of slots:
+You can also lock dynamic context to one file, one directory, or a chosen group of slots:
 
 ```text
-Push selection -> Push file or directory -> Choose active slots for @ctx -> @ctx continue this task
+Push selection -> Push file or directory -> Choose active slots for dynamic context -> continue this task
 ```
 
 Or start from the Explorer without opening files first:
 
 ```text
-Right-click file/folder -> Push to buffer -> Choose active slots for @ctx -> @ctx continue this task
+Right-click file/folder -> Push to buffer -> Choose active slots for dynamic context -> continue this task
 ```
 
 Or export a project artifact for other models and tools:
@@ -241,19 +243,19 @@ You can push the current file directly:
 CtxPack: Push entire file to buffer
 ```
 
-And you can clean the buffer surgically before asking with `@ctx`:
+And you can clean the buffer surgically before asking:
 
 ```text
-CtxPack: Inspect buffered slot -> CtxPack: Remove buffered slot -> @ctx continue
+CtxPack: Inspect buffered slot -> CtxPack: Remove buffered slot -> continue
 ```
 
 If you want to confirm exactly what the next iteration will inject:
 
 ```text
-CtxPack: Show current @ctx scope
+CtxPack: Show current dynamic context scope
 ```
 
-The visual above is intentionally simple: open the Command Palette, choose the CtxPack action, and only then ask with `@ctx`.
+The visual above is intentionally simple: open the Command Palette, choose the CtxPack action, and then prompt normally.
 
 ## CLI Integration
 
@@ -275,7 +277,7 @@ The new extension commands are thin wrappers around this same CLI capability. Th
 
 - Keep prompts focused instead of pasting giant files repeatedly.
 - Reuse a curated context set across multiple Copilot turns.
-- Persist a chosen subset of slots across multiple `@ctx` iterations.
+- Persist a chosen subset of slots across multiple chat iterations.
 - Decide explicitly when context should or should not be injected.
 - Combine editor-driven and CLI-driven context collection.
 - Export portable semantic or readable project docs without leaving VS Code.
@@ -285,12 +287,12 @@ The new extension commands are thin wrappers around this same CLI capability. Th
 
 - `Generate semantic project pack` failed:
   Confirm that a workspace folder is open and the extension can read the project files.
-- `@ctx` answered with stale assumptions:
+- Dynamic context answered with stale assumptions:
   Inspect old slots, change the active slot selection, or clear the active filter before retrying.
 - The buffer feels too noisy:
-  Prefer one precise selection push over multiple full-file pushes, or lock `@ctx` to selected slots only.
+  Prefer one precise selection push over multiple full-file pushes, or lock dynamic context to selected slots only.
 - The buffer is empty:
-  Push a selection, push a file, or generate and push the semantic workspace pack before using `@ctx`.
+  Push a selection, push a file, or generate and push the semantic workspace pack before prompting.
 - You see `Cannot have more than ... tools per request`:
   CtxPack now retries automatically with model-managed tool selection. If this persists, reduce loaded integrations/tools and retry.
 - Chat stays in `Evaluating` for too long:

@@ -90,8 +90,8 @@ export function activate(context: vscode.ExtensionContext): void {
         { label: "No", value: "no" },
       ],
       {
-        title: "CtxPack: use this slot in @ctx?",
-        placeHolder: `Choose whether '${tag}' should become active for chat injection`,
+        title: "CtxPack: use this slot in chat context?",
+        placeHolder: `Choose whether '${tag}' should become active in dynamic context injection`,
       }
     );
 
@@ -101,7 +101,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     buffer.setActiveTags([tag], "all");
     updateStatusBar();
-    vscode.window.showInformationMessage(`CtxPack: @ctx is now scoped to '${tag}' for ask, plan, and agent.`);
+    vscode.window.showInformationMessage(`CtxPack: dynamic chat context is now scoped to '${tag}' for ask, plan, and agent.`);
   };
 
   const pickTargetModes = async (): Promise<CtxChatMode[] | undefined> => {
@@ -272,8 +272,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const selectActiveSlotsDisposable = registerCtxCommand("ctxpack.selectActiveSlots", async () => {
     const tags = await pickSlots(
-      "CtxPack: choose active slots for @ctx",
-      "Selected slots will be injected on every @ctx iteration until you change them"
+      "CtxPack: choose active slots for dynamic context",
+      "Selected slots will be injected on every chat iteration until you change them"
     );
 
     if (tags === undefined) {
@@ -402,7 +402,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const message = listCtxChatModes()
       .map((mode) => `${getCtxChatModeLabel(mode)}: ${buffer.hasActiveSelection(mode) ? summaries[mode] : "all buffered slots"}`)
       .join(" | ");
-    vscode.window.showInformationMessage(`CtxPack: @ctx scope by mode -> ${message}.`);
+    vscode.window.showInformationMessage(`CtxPack: dynamic context scope by mode -> ${message}.`);
   });
 
   const exportSemanticDisposable = registerCtxCommand("ctxpack.exportSemantic", async () => {
@@ -540,8 +540,8 @@ export function activate(context: vscode.ExtensionContext): void {
         { label: "Push selection", value: "push" },
         { label: "Push entire file", value: "pushFile" },
         { label: "Push file or directory", value: "pushPath" },
-        { label: "Choose active slots for @ctx", value: "selectActiveSlots" },
-        { label: "Show current @ctx scope", value: "slotScopeStatus" },
+        { label: "Choose active slots for dynamic context", value: "selectActiveSlots" },
+        { label: "Show current dynamic context scope", value: "slotScopeStatus" },
         { label: "Generate semantic pack and push", value: "pushWorkspaceSemantic" },
         { label: "Generate semantic project pack", value: "exportSemantic" },
         { label: "Generate readable project pack", value: "exportReadable" },
@@ -613,10 +613,18 @@ function formatInjectionSuffix(snapshot: CtxInjectionSnapshot | undefined): stri
   }
 
   if (snapshot.status === "error") {
-    return " | @ctx error";
+    return " | ctx error";
   }
 
-  return ` | @ctx ${snapshot.usedTags.length} slot(s)`;
+  if (snapshot.status === "reading") {
+    return " | reading buffer";
+  }
+
+  if (snapshot.status === "correlating") {
+    return " | correlating slots";
+  }
+
+  return ` | ctx ${snapshot.usedTags.length} slot(s)`;
 }
 
 function buildStatusTooltip(buffer: ContextRingBuffer, snapshot: CtxInjectionSnapshot | undefined): string {
@@ -625,22 +633,30 @@ function buildStatusTooltip(buffer: ContextRingBuffer, snapshot: CtxInjectionSna
   ];
 
   if (!snapshot) {
-    lines.push("Last @ctx injection: none yet in this session.");
+    lines.push("Last dynamic context injection: none yet in this session.");
     return lines.join("\n");
   }
 
-  lines.push(`Last @ctx mode: ${snapshot.modeLabel}`);
-  lines.push(`Last @ctx scope: ${snapshot.scopeLabel}`);
+  lines.push(`Last context mode: ${snapshot.modeLabel}`);
+  lines.push(`Last context scope: ${snapshot.scopeLabel}`);
   lines.push(`Used slots (${snapshot.usedTags.length}): ${snapshot.usedTags.join(", ") || "none"}`);
   lines.push(`Omitted slots (${snapshot.omittedTags.length}): ${snapshot.omittedTags.join(", ") || "none"}`);
+  const correlatedSummary = snapshot.correlatedSlots
+    .map((entry) => `${entry.tag} (${Math.round(entry.score * 100)}%)`)
+    .join(", ");
+  lines.push(`Correlated slots (${snapshot.correlatedSlots.length}): ${correlatedSummary || "none"}`);
   lines.push(`Context tokens: ~${snapshot.estimatedTokens} / budget ~${snapshot.tokenBudget}`);
 
   if (snapshot.status === "error") {
-    lines.push(`Last @ctx error: ${snapshot.errorMessage ?? "unknown"}`);
+    lines.push(`Last context error: ${snapshot.errorMessage ?? "unknown"}`);
   } else if (snapshot.status === "sent") {
-    lines.push("Last @ctx status: sent to language model.");
+    lines.push("Last context status: sent to language model.");
+  } else if (snapshot.status === "reading") {
+    lines.push("Last context status: reading buffered slots.");
+  } else if (snapshot.status === "correlating") {
+    lines.push("Last context status: correlating prompt with slots.");
   } else {
-    lines.push("Last @ctx status: prepared.");
+    lines.push("Last context status: prepared.");
   }
 
   return lines.join("\n");

@@ -2,6 +2,14 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 0.1.13
+
+- Removed the requirement to use `@ctx` as an explicit prompt signal in the extension UX language; context injection is now described and handled as dynamic chat context.
+- Updated command labels, wizard actions, and scope/status messages to use dynamic context terminology instead of `@ctx` wording.
+- Added visual context-read telemetry during response generation with explicit phases: reading buffered slots and correlating prompt intent.
+- Added an in-chat slot-correlation table that shows which buffered slots most overlap with the current prompt and which terms were matched.
+- Expanded status bar tooltip telemetry with correlated-slot summaries to make context grounding easier to verify.
+
 ## 0.1.12
 
 - Reduced participant request stalls by increasing request timeout windows and retrying without explicit tools when a tool-heavy request times out.

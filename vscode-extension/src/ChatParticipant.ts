@@ -15,11 +15,12 @@ export interface CtxInjectionSnapshot {
   scopeLabel: string;
   usedTags: string[];
   omittedTags: string[];
+  correlatedSlots: Array<{ tag: string; score: number; matchedTerms: string[] }>;
   estimatedTokens: number;
   tokenBudget: number;
   forwardedToolsCount: number;
   availableToolsCount: number;
-  status: "ready" | "sent" | "error";
+  status: "ready" | "reading" | "correlating" | "sent" | "error";
   errorMessage?: string;
 }
 
@@ -45,6 +46,7 @@ export function registerChatParticipant(
       const promptContext = hasGlobalSelection
         ? buffer.buildPromptContextForTags(globalActiveTags, contextTokenBudget)
         : buffer.buildPromptContext(effectiveMode, contextTokenBudget);
+      const correlations = correlateSlotsWithPrompt(request.prompt, promptContext.content);
       const omittedSummary = promptContext.omittedTags.length
         ? `Omitted slots because of prompt budget: ${promptContext.omittedTags.join(", ")}.`
         : "";
@@ -55,6 +57,7 @@ export function registerChatParticipant(
         scopeLabel,
         usedTags: promptContext.usedTags,
         omittedTags: promptContext.omittedTags,
+        correlatedSlots: correlations,
         estimatedTokens: promptContext.estimatedTokens,
         tokenBudget: contextTokenBudget,
         forwardedToolsCount: forwardedTools.length,
@@ -62,6 +65,17 @@ export function registerChatParticipant(
         status: "ready",
       };
       onInjectionSnapshot?.(baseSnapshot);
+      stream.progress("CtxPack: reading buffered slots...");
+      onInjectionSnapshot?.({
+        ...baseSnapshot,
+        status: "reading",
+      });
+
+      stream.progress("CtxPack: correlating prompt intent with buffered slots...");
+      onInjectionSnapshot?.({
+        ...baseSnapshot,
+        status: "correlating",
+      });
 
       const usedList = promptContext.usedTags.length ? promptContext.usedTags.join(", ") : "none";
       const omittedList = promptContext.omittedTags.length ? promptContext.omittedTags.join(", ") : "none";
@@ -77,6 +91,11 @@ export function registerChatParticipant(
           "",
         ].join("  \n")
       );
+
+      const correlationMarkdown = buildCorrelationMarkdown(correlations);
+      if (correlationMarkdown) {
+        stream.markdown(correlationMarkdown);
+      }
 
       if (buffer.listSlots().length === 0) {
         stream.markdown(buildEmptyBufferGuide(modeLabel));
@@ -192,6 +211,78 @@ async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeo
 function isTimeoutError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /timed out while waiting for the language model response/i.test(message);
+}
+
+function tokenizeForCorrelation(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9_]+/)
+    .filter((term) => term.length >= 3);
+}
+
+function parseSlotSections(content: string): Array<{ tag: string; body: string }> {
+  const sections: Array<{ tag: string; body: string }> = [];
+  const regex = /^### \[(.+?)\]\n([\s\S]*?)(?=\n\n### \[|$)/gm;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(content)) !== null) {
+    sections.push({
+      tag: match[1].trim(),
+      body: match[2].trim(),
+    });
+  }
+
+  return sections;
+}
+
+function correlateSlotsWithPrompt(
+  prompt: string,
+  promptContextContent: string
+): Array<{ tag: string; score: number; matchedTerms: string[] }> {
+  const promptTerms = new Set(tokenizeForCorrelation(prompt));
+  if (promptTerms.size === 0) {
+    return [];
+  }
+
+  const sections = parseSlotSections(promptContextContent);
+  const result: Array<{ tag: string; score: number; matchedTerms: string[] }> = [];
+
+  for (const section of sections) {
+    const slotTerms = new Set(tokenizeForCorrelation(section.body));
+    const matchedTerms = [...promptTerms].filter((term) => slotTerms.has(term)).slice(0, 6);
+    if (matchedTerms.length === 0) {
+      continue;
+    }
+
+    const rawScore = matchedTerms.length / Math.max(1, Math.min(promptTerms.size, 12));
+    result.push({
+      tag: section.tag,
+      score: Math.min(1, Number(rawScore.toFixed(2))),
+      matchedTerms,
+    });
+  }
+
+  return result.sort((a, b) => b.score - a.score).slice(0, 5);
+}
+
+function buildCorrelationMarkdown(correlations: Array<{ tag: string; score: number; matchedTerms: string[] }>): string {
+  if (correlations.length === 0) {
+    return "**CtxPack slot correlation**  \nNo strong lexical overlap detected between the prompt and buffered slots.";
+  }
+
+  const lines = [
+    "**CtxPack slot correlation**",
+    "| Slot | Correlation | Matched terms |",
+    "| --- | --- | --- |",
+  ];
+
+  for (const item of correlations) {
+    const percentage = Math.round(item.score * 100);
+    const bars = "#".repeat(Math.max(1, Math.round(item.score * 8)));
+    lines.push(`| ${item.tag} | ${bars} ${percentage}% | ${item.matchedTerms.join(", ")} |`);
+  }
+
+  return `${lines.join("\n")}\n`;
 }
 
 /**
@@ -433,7 +524,7 @@ async function sendWithToolFallback(
 function buildEmptyBufferGuide(modeLabel: string): string {
   return [
     "**CtxPack is active, but the buffer is empty**",
-    `You invoked @ctx in ${modeLabel} mode, but there are no buffered slots yet.`,
+    `CtxPack is running in ${modeLabel} mode, but there are no buffered slots yet.`,
     "",
     "**How to use the extension**",
     "1. Add context to the buffer:",
@@ -441,8 +532,8 @@ function buildEmptyBufferGuide(modeLabel: string): string {
     "   - `CtxPack: Push entire file to buffer`",
     "   - `CtxPack: Push file or directory to buffer`",
     "   - `CtxPack: Generate semantic pack and push to buffer`",
-    "2. (Optional) Scope what `@ctx` uses with `CtxPack: Choose active slots for @ctx`.",
-    "3. Run `@ctx` again and CtxPack will inject the selected slots into the chat.",
+    "2. (Optional) Scope what dynamic injection uses with `CtxPack: Choose active slots for dynamic context`.",
+    "3. Send your prompt normally and CtxPack will inject the selected slots into the chat.",
     "",
     "**Quick workflow**",
     "Use `CtxPack: Open context workflow wizard` from the Command Palette to run the full flow step by step.",

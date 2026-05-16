@@ -140,7 +140,7 @@ python3 tests/run_smoke.py
 
 ## Extensão VS Code (Context Cache)
 
-O CtxPack inclui uma extensão VS Code em [vscode-extension/README.md](vscode-extension/README.md) que mantém um buffer de contexto em memória de sessão e expõe o participante de chat `@ctx`.
+O CtxPack inclui uma extensão VS Code em [vscode-extension/README.md](vscode-extension/README.md) que mantém um buffer de contexto em memória de sessão e faz injeção dinâmica de contexto pelo participante de chat CtxPack.
 
 A divisão de responsabilidade é intencional:
 
@@ -152,32 +152,31 @@ Referência visual rápida do fluxo: veja a imagem em [vscode-extension/README.m
 
 Comportamento importante:
 
-- O uso de `@ctx` é explícito por mensagem. Se você quiser injeção de contexto de novo na próxima mensagem, precisa digitar `@ctx` novamente nesse novo prompt.
-- `@ctx` não coleta arquivos sozinho.
-- `@ctx` injeta no prompt apenas o que já está no buffer.
+- Você não precisa mais prefixar cada prompt com `@ctx` para repetir injeção.
+- A injeção dinâmica de contexto não coleta arquivos sozinha.
+- A injeção usa apenas o que já está no buffer.
 - O buffer só muda quando você faz push, remove slots, ou limpa a sessão.
 - Se você selecionar slots ativos, esse subconjunto vira a fonte efetiva de contexto em Ask, Plan e Agent.
-- `@ctx` não deve ser usado por padrão em todo prompt.
-- Cada requisição exibe um relatório visual de injeção (slots usados, omitidos e estimativa de tokens) e atualiza a telemetria no status bar.
+- Cada requisição exibe um relatório visual de injeção (slots usados, omitidos e estimativa de tokens), fases de leitura/correlação e telemetria no status bar.
 
-### Quando usar `@ctx`
+### Quando usar injeção dinâmica de contexto
 
-Use `@ctx` quando a resposta depender de contexto já preparado no buffer, por exemplo:
+Use injeção dinâmica quando a resposta depender de contexto já preparado no buffer, por exemplo:
 
 - a seleção ou o arquivo que você acabou de enviar
 - vários trechos acumulados para a mesma tarefa
 - um resumo semântico do workspace gerado pelo CtxPack
 - contexto específico do repositório que você não quer colar manualmente
 
-Evite `@ctx` quando:
+Evite injeção dinâmica quando:
 
 - a pergunta for genérica
 - o buffer ainda estiver carregando contexto de outra tarefa
 - você quiser uma resposta limpa, sem hipóteses extras baseadas em contexto antigo
 
-Regra prática: se o contexto muda materialmente a resposta, use `@ctx`; se só vai adicionar ruído, não use.
+Regra prática: se o contexto muda materialmente a resposta, mantenha injeção ativa; se só adicionar ruído, reduza os slots ativos.
 
-O `@ctx` agora funciona em dois modos:
+A injeção dinâmica funciona em dois modos:
 
 - modo buffer completo: injeta todos os slots armazenados
 - modo slots ativos: injeta apenas os slots escolhidos pelo usuário, e reaproveita esse mesmo subconjunto em cada nova iteração até que ele seja alterado
@@ -189,9 +188,9 @@ Observação: quando houver slots ativos selecionados, eles são priorizados com
 1. Decida se você precisa de um trecho local ou de um panorama do projeto.
 2. Para trabalho local, faça push da seleção ou do arquivo.
 3. Para contexto do workspace inteiro, rode `CtxPack: Generate semantic pack and push to buffer`.
-4. Se quiser que a IA enxergue apenas um arquivo, diretório, ou grupo específico de slots em toda iteração, rode `CtxPack: Choose active slots for @ctx`.
+4. Se quiser que a IA enxergue apenas um arquivo, diretório, ou grupo específico de slots em toda iteração, rode `CtxPack: Choose active slots for dynamic context`.
 5. Inspecione ou remova slots antigos se necessário.
-6. Use `@ctx` no Copilot Chat somente depois que o buffer e o escopo ativo refletirem a tarefa atual.
+6. No Copilot Chat com o participante CtxPack, envie o prompt normalmente depois que o buffer e o escopo ativo refletirem a tarefa atual.
 7. Ao trocar de assunto/tarefa, limpe com `ctxpack.clear` ou remova o filtro ativo.
 
 ### Comandos da extensão
@@ -210,10 +209,10 @@ Se quiser um ponto de entrada guiado, execute `CtxPack: Open context workflow wi
 - `ctxpack.pushFile`: envia o arquivo ativo inteiro.
 - `ctxpack.pushPath`: envia um arquivo ou diretório como um slot reutilizável. Também pode ser acionado pelo menu de contexto do Explorer.
 - `ctxpack.status`: inspeciona os slots armazenados e o uso estimado de tokens.
-- `ctxpack.selectActiveSlots`: escolhe quais slots ficam ativos para o `@ctx` em todas as iterações seguintes.
-- `ctxpack.clearActiveSelection`: volta o `@ctx` para o modo de buffer completo.
-- `ctxpack.slotScopeStatus`: mostra qual é o escopo atual que o `@ctx` vai injetar.
-- `ctxpack.inspectSlot`: abre uma prévia de um slot antes de usar `@ctx`.
+- `ctxpack.selectActiveSlots`: escolhe quais slots ficam ativos para contexto dinâmico em todas as iterações seguintes.
+- `ctxpack.clearActiveSelection`: volta a injeção para o modo de buffer completo.
+- `ctxpack.slotScopeStatus`: mostra qual é o escopo atual de contexto dinâmico.
+- `ctxpack.inspectSlot`: abre uma prévia de um slot antes de enviar o prompt.
 - `ctxpack.removeSlot`: remove um slot antigo sem limpar o buffer inteiro.
 - `ctxpack.clear`: limpa o buffer da sessão atual.
 - `ctxpack.exportSemantic`: gera `<workspace>.sem.ctx.md` dentro da extensão.
@@ -229,7 +228,7 @@ Também é possível usar o CtxPack diretamente no Explorer do VS Code:
 - clique com o botão direito em um arquivo e use `CtxPack: Push this file to buffer`
 - clique com o botão direito em uma pasta e use `CtxPack: Push this folder to buffer`
 
-Isso é útil quando você quer que o `@ctx` fique preso a um caminho específico sem precisar abrir o arquivo antes.
+Isso é útil quando você quer prender o contexto dinâmico a um caminho específico sem precisar abrir o arquivo antes.
 
 ### Requisitos para os comandos de projeto
 
@@ -266,7 +265,7 @@ npm install
 npm run compile
 npm test
 npm run package
-code --install-extension ctxpack-context-0.1.7.vsix
+code --install-extension ctxpack-context-0.1.13.vsix
 ```
 
 Também é possível instalar pela interface do VS Code: Extensões -> menu `...` -> Install from VSIX...
@@ -276,7 +275,7 @@ Também é possível instalar pela interface do VS Code: Extensões -> menu `...
 1. Abra a pasta `vscode-extension` no VS Code.
 2. Rode `npm install` e `npm run compile`.
 3. Pressione `F5` para abrir um Extension Development Host.
-4. Teste os comandos e o participante `@ctx` nessa janela.
+4. Teste os comandos e o participante CtxPack nessa janela.
 
 ### Gerar VSIX
 
@@ -288,12 +287,12 @@ npm test
 npm run package
 ```
 
-Isso gera o arquivo `ctxpack-context-0.1.7.vsix`.
+Isso gera o arquivo `ctxpack-context-0.1.13.vsix`.
 
 ### Dúvidas comuns
 
 1. Preciso começar todo prompt com `@ctx`?
-  Sim, quando você quiser injeção de contexto nesse prompt. Se a próxima mensagem também precisar, digite `@ctx` novamente.
+  Não. A injeção de contexto é dinâmica quando você está usando o participante CtxPack.
 2. O contexto atualiza sozinho a cada prompt?
   Não. Faça novo push sempre que quiser refletir mudanças recentes.
 3. O buffer fica salvo para sempre?
@@ -301,11 +300,11 @@ Isso gera o arquivo `ctxpack-context-0.1.7.vsix`.
 4. O que acontece se o limite de tokens for atingido?
   O buffer aplica FIFO e remove entradas antigas primeiro.
 5. Como envio o contexto semântico do projeto inteiro para o chat sem fazer push arquivo por arquivo?
-  Rode `CtxPack: Generate semantic pack and push to buffer` e depois use `@ctx`.
+  Rode `CtxPack: Generate semantic pack and push to buffer` e depois envie o prompt normalmente no participante CtxPack.
 6. Como exporto contexto para outra LLM em vez de usar só o chat do Copilot?
   Rode `CtxPack: Generate semantic project pack` ou `CtxPack: Generate readable project pack`.
 7. Como garantir que a IA enxergue sempre só um arquivo, um diretório, ou alguns slots específicos em cada iteração?
-  Faça push desse conteúdo e depois use `CtxPack: Choose active slots for @ctx`. Esse subconjunto passa a ser a fonte efetiva de contexto em Ask, Plan e Agent.
+  Faça push desse conteúdo e depois use `CtxPack: Choose active slots for dynamic context`. Esse subconjunto passa a ser a fonte efetiva de contexto em Ask, Plan e Agent.
 
 8. E se o chat ficar muito tempo em `Evaluating`?
   O participante agora tem timeout defensivo e deve retornar erro explícito em vez de ficar aguardando indefinidamente.
