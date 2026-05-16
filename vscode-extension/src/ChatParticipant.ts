@@ -87,8 +87,9 @@ export function registerChatParticipant(
         availableToolsCount: availableTools.length,
         status: "ready",
       };
-      // Update status to "ready" with visual indicator
+
       onInjectionSnapshot?.(baseSnapshot);
+
       stream.progress("⏳ CtxPack: reading buffered slots...");
       onInjectionSnapshot?.({
         ...baseSnapshot,
@@ -100,6 +101,22 @@ export function registerChatParticipant(
         ...baseSnapshot,
         status: "correlating",
       });
+
+      // FIX: check empty buffer BEFORE printing the injection report. Previously the
+      // report was streamed unconditionally (showing "Used slots: none / Omitted: none"),
+      // followed by the empty-buffer guide — confusing and noisy for the user.
+      if (buffer.listSlots().length === 0) {
+        stream.markdown(buildEmptyBufferGuide(modeLabel));
+        onInjectionSnapshot?.({
+          ...baseSnapshot,
+          status: "sent",
+        });
+        return {
+          metadata: {
+            source: "ctxpack-empty-buffer-guide",
+          },
+        };
+      }
 
       const usedList = promptContext.usedTags.length ? promptContext.usedTags.join(", ") : "none";
       const omittedList = promptContext.omittedTags.length ? promptContext.omittedTags.join(", ") : "none";
@@ -120,19 +137,6 @@ export function registerChatParticipant(
       const correlationMarkdown = buildCorrelationMarkdown(correlations);
       if (correlationMarkdown) {
         stream.markdown(correlationMarkdown);
-      }
-
-      if (buffer.listSlots().length === 0) {
-        stream.markdown(buildEmptyBufferGuide(modeLabel));
-        onInjectionSnapshot?.({
-          ...baseSnapshot,
-          status: "sent",
-        });
-        return {
-          metadata: {
-            source: "ctxpack-empty-buffer-guide",
-          },
-        };
       }
 
       const contextBlock = promptContext.content
@@ -157,7 +161,11 @@ export function registerChatParticipant(
         "Respect the current Copilot chat mode when available instead of forcing a generic Q&A behavior.",
         getModeBehaviorInstruction(modeResolution.mode, effectiveMode),
         "Treat the CtxPack buffer as grounded workspace evidence that must be read before answering when it is present.",
-        "Do not ignore the CtxPack block. Use it first, then combine it with chat history and tool results.",
+        "Do not ignore the CtxPack block. Read it first and answer from it directly when possible.",
+        // FIX: explicit instruction to avoid unnecessary tool use when the buffer already
+        // has the needed context. The previous wording ("combine it with chat history and
+        // tool results") was causing the agent to search/read files already in the buffer.
+        "Only invoke tools when the CtxPack buffer does not contain enough information to answer the request. Do not search or read files that are already represented in the buffer.",
         contextBlock,
       ].join("\n\n");
 
@@ -321,12 +329,12 @@ function buildCorrelationMarkdown(correlations: Array<{ tag: string; score: numb
 
 /**
  * Determines if tools should be forwarded to the language model based on the current chat mode.
- * 
+ *
  * Tool availability per mode:
  * - "agent": Full tool access for autonomous task execution
  * - "ask": Tools available for natural use by the AI (e.g., file operations, searches)
  * - "plan": Tools disabled - mode is read-only for strategic planning only
- * 
+ *
  * @param mode The current CtxPack chat mode
  * @returns true if tools should be forwarded, false otherwise
  */
@@ -379,8 +387,10 @@ function inferIntentMode(request: vscode.ChatRequest, chatContext: vscode.ChatCo
     return "ask";
   }
 
-  // Prefer agentic behavior when metadata is missing to avoid blocking legitimate edit requests.
-  return "agent";
+  // FIX: was "agent" — defaulting to agent caused the model to invoke tools on every
+  // unclassified prompt, including simple questions that the buffer could answer directly.
+  // "ask" is the safer default: it keeps the request answerable without tool loops.
+  return "ask";
 }
 
 function collectIntentSignals(request: vscode.ChatRequest, chatContext: vscode.ChatContext): string[] {
@@ -425,7 +435,11 @@ function collectIntentSignals(request: vscode.ChatRequest, chatContext: vscode.C
 
 function getModeBehaviorInstruction(mode: CtxResolvedChatMode, effectiveMode: CtxChatMode): string {
   if (mode === "auto") {
-    return `Mode metadata is unavailable: inferred intent is ${getCtxChatModeLabel(effectiveMode)}. Keep execution unblocked, and when edits are requested, proceed agentically.`;
+    // FIX: the previous instruction said "keep execution unblocked, proceed agentically"
+    // while tools were simultaneously suppressed (modeSource=fallback → tools=[]).
+    // The contradiction made the model attempt implicit tool calls through the provider,
+    // causing search loops. Now we explicitly tell it to answer from the buffer first.
+    return `Mode metadata is unavailable: inferred intent is ${getCtxChatModeLabel(effectiveMode)}. Prioritize answering from the CtxPack context. Only invoke tools when the buffer clearly lacks the information needed to answer the request.`;
   }
 
   if (mode === "agent") {
@@ -509,7 +523,18 @@ async function sendWithToolFallback(
   tools: readonly vscode.LanguageModelToolInformation[],
   extensionMode: vscode.ExtensionMode
 ): Promise<vscode.ChatResult> {
-  const sendRequest = (explicitTools?: readonly vscode.LanguageModelToolInformation[]) =>
+  // FIX: use a `null` sentinel to distinguish "let the model manage tools natively"
+  // from "explicitly pass no tools". Previously, passing `undefined` for the tools
+  // parameter omitted the key entirely from the request options — the VS Code / Copilot
+  // API then defaulted to forwarding ALL available tools implicitly, causing the model
+  // to invoke searches and file reads even when we wanted zero tool access (e.g. when
+  // modeSource === "fallback" or mode === "plan"). Passing `tools: []` explicitly tells
+  // the provider the caller has intentionally disabled tool access for this request.
+  //
+  //   null  → omit the tools key (model-managed, only used in the tool-limit retry path)
+  //   []    → pass tools: [] explicitly (blocks implicit provider-side tool injection)
+  //   [...] → explicit curated tool list
+  const sendRequest = (explicitTools: readonly vscode.LanguageModelToolInformation[] | null) =>
     chatUtils.sendChatParticipantRequest(
       request,
       chatContext,
@@ -520,14 +545,15 @@ async function sendWithToolFallback(
           references: true,
           responseText: true,
         },
-        ...(explicitTools && explicitTools.length > 0 ? { tools: explicitTools } : {}),
+        ...(explicitTools !== null ? { tools: explicitTools } : {}),
         extensionMode,
       },
       token
     );
 
   const hasExplicitTools = tools.length > 0;
-  const firstAttempt = sendRequest(hasExplicitTools ? tools : undefined);
+  // Pass tools explicitly — use [] when none are selected so implicit tool access is blocked.
+  const firstAttempt = sendRequest(hasExplicitTools ? tools : []);
 
   try {
     return await awaitWithTimeout(
@@ -545,7 +571,8 @@ async function sendWithToolFallback(
       ? "CtxPack note: tool list exceeded the model limit; retrying with model-managed tool set."
       : "CtxPack note: request with explicit tools timed out; retrying with model-managed tool set.";
     stream.markdown(`\n\n${note}`);
-    const fallbackRequest = sendRequest(undefined);
+    // null = omit tools key entirely so the provider falls back to its native tool management.
+    const fallbackRequest = sendRequest(null);
 
     return await awaitWithTimeout(
       fallbackRequest.result,

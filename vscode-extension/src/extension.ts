@@ -52,16 +52,33 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar.text = overrideText ?? buildCompactStatusText(buffer, lastInjectionSnapshot);
     statusBar.tooltip = buildStatusTooltip(buffer, lastInjectionSnapshot);
     statusBar.show();
-    // Ensure status bar remains visible during all state transitions
-    setTimeout(() => statusBar?.show(), 100);
   };
 
   registerChatParticipant(context, buffer, (snapshot) => {
     lastInjectionSnapshot = snapshot;
     updateStatusBar();
-    // Force re-render to ensure status bar visibility during injection
-    if (statusBar) {
-      statusBar.show();
+
+    // FIX: the permanent status bar item is not guaranteed to re-render synchronously
+    // during async participant execution. Intermediate states (reading, correlating)
+    // were flashing too fast to be visible, and the final confirmation was only noticed
+    // when @ctx was explicitly used. vscode.window.setStatusBarMessage() has priority
+    // over the permanent item and auto-dismisses after the given timeout, ensuring the
+    // user always gets a visual signal whenever the buffer is accessed — regardless of
+    // how quickly the internal state transitions happen.
+    if (snapshot.status === "reading") {
+      vscode.window.setStatusBarMessage("$(loading~spin) CtxPack: reading buffer slots...", 4000);
+    } else if (snapshot.status === "correlating") {
+      vscode.window.setStatusBarMessage("$(loading~spin) CtxPack: correlating context...", 4000);
+    } else if (snapshot.status === "sent") {
+      const label = snapshot.bufferAttached
+        ? `$(check) CtxPack: ${snapshot.usedTags.length} slot(s) injected`
+        : "$(info) CtxPack: no slots attached to this request";
+      vscode.window.setStatusBarMessage(label, 5000);
+    } else if (snapshot.status === "error") {
+      vscode.window.setStatusBarMessage(
+        `$(error) CtxPack: ${snapshot.errorMessage ?? "injection error"}`,
+        6000
+      );
     }
   });
 
@@ -664,7 +681,7 @@ function buildStatusTooltip(buffer: ContextRingBuffer, snapshot: CtxInjectionSna
   lines.push(`Correlated slots (${snapshot.correlatedSlots.length}): ${correlatedSummary || "none"}`);
   lines.push(`Context tokens: ~${snapshot.estimatedTokens} / budget ~${snapshot.tokenBudget}`);
   lines.push("");
-  
+
   if (snapshot.status === "sent") {
     if (snapshot.bufferAttached) {
       lines.push("✅ BUFFER ACCESS CONFIRMED");

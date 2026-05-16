@@ -2,6 +2,16 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 0.1.18
+
+- **Fixed empty buffer check ordering**: Buffer emptiness is now verified before printing the injection report, preventing confusing "Used slots: none" messages followed by the empty-buffer guide.
+- **Eliminated unnecessary tool invocations**: Added explicit instruction to avoid redundant tool calls when the CtxPack buffer already contains sufficient context to answer the request.
+- **Corrected default mode inference**: Changed fallback intent default from `agent` to `ask` mode, reducing unintended tool invocations on unclassified prompts and preventing tool loops.
+- **Improved tool parameter handling**: Fixed tools parameter passing to use explicit empty list `[]` instead of `undefined` to prevent implicit provider-side tool injection, with `null` sentinel for model-managed fallback.
+- **Enhanced status bar visual feedback**: Added `vscode.window.setStatusBarMessage()` to ensure visual status updates are immediately visible during async participant execution, preventing missed state transitions (reading → correlating → sent).
+- **Clarified mode-specific tool availability**: Documented tool forwarding rules per mode: Agent and Ask receive full tool access, Plan mode remains read-only, and fallback mode blocks explicit tools to reduce payload and timeout risk.
+- **Fixed auto-mode behavior instruction**: Corrected contradictory mode metadata unavailable scenarios by explicitly instructing the model to prioritize CtxPack buffer content before invoking tools.
+
 ## 0.1.17
 
 - **Compacted session status in the status bar**: replaced long status text with a shorter, stable format (`ctx {slots}s ~{tokens}k {badge}`) to reduce truncation and improve visibility.
