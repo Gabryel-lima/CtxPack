@@ -26,8 +26,10 @@ The extension and the Python script are complementary:
 - Apply selected active slots as the effective context source across Ask, Plan, and Agent.
 - Inject accumulated context into Copilot Chat dynamically through the CtxPack participant.
 - Show an in-chat injection report and status bar telemetry so slot usage is visually verifiable.
-- Show explicit context-read phases (`reading buffered slots` and `correlating prompt intent`) while the model is reasoning.
+- Show explicit context-read phases with visual indicators (⏳ reading, 🔗 correlating) while the model is reasoning.
 - Show a slot-correlation table that highlights which slots most overlap with the current prompt.
+- Display real-time status bar feedback with emoji indicators (✅ injected, ⏳ reading, 🔗 correlating, ❌ error, 📦 ready).
+- Show explicit buffer-access confirmation in UI: chat report includes `Buffer access: confirmed` and status bar shows `buffer in use (N slot(s))` after successful injection.
 - Generate a semantic project pack from the extension and push it straight into the buffer.
 - Generate `.sem.ctx.md`, `.ctx.md`, and `.packignore` directly from the extension.
 - Accept context pushes from the CtxPack CLI through IPC.

@@ -613,18 +613,24 @@ function formatInjectionSuffix(snapshot: CtxInjectionSnapshot | undefined): stri
   }
 
   if (snapshot.status === "error") {
-    return " | ctx error";
+    return " | ❌ error";
   }
 
   if (snapshot.status === "reading") {
-    return " | reading buffer";
+    return " | ⏳ reading";
   }
 
   if (snapshot.status === "correlating") {
-    return " | correlating slots";
+    return " | 🔗 correlating";
   }
 
-  return ` | ctx ${snapshot.usedTags.length} slot(s)`;
+  if (snapshot.status === "sent") {
+    return snapshot.usedTags.length > 0
+      ? ` | ✅ buffer in use (${snapshot.usedTags.length} slot(s))`
+      : " | ✅ request sent (no slot selected)";
+  }
+
+  return ` | 📦 ${snapshot.usedTags.length} slot(s) ready`;
 }
 
 function buildStatusTooltip(buffer: ContextRingBuffer, snapshot: CtxInjectionSnapshot | undefined): string {
@@ -646,6 +652,7 @@ function buildStatusTooltip(buffer: ContextRingBuffer, snapshot: CtxInjectionSna
     .join(", ");
   lines.push(`Correlated slots (${snapshot.correlatedSlots.length}): ${correlatedSummary || "none"}`);
   lines.push(`Context tokens: ~${snapshot.estimatedTokens} / budget ~${snapshot.tokenBudget}`);
+  lines.push(`Buffer access confirmed: ${snapshot.status === "sent" ? "yes" : "pending"}`);
 
   if (snapshot.status === "error") {
     lines.push(`Last context error: ${snapshot.errorMessage ?? "unknown"}`);

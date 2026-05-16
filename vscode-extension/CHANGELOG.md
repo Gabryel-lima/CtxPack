@@ -2,6 +2,21 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 0.1.14
+
+- Removed remaining UX ambiguity around `@ctx`: the participant guidance now explicitly states that no `@ctx` prefix is needed after the participant is sticky.
+- Added explicit chat-side confirmation line in each injection report: `Buffer access: confirmed`.
+- Improved status bar confirmation for successful injections to show `buffer in use (N slot(s))` when context is actually attached.
+- Added tooltip confirmation field: `Buffer access confirmed: yes|pending`.
+
+## 0.1.14
+
+- **Enhanced prompt validation**: Empty prompts are now rejected at the participant level with a clear error message, preventing silent failures and improving UX clarity.
+- **Improved visual feedback**: Status bar indicators now use emoji icons (✅, ⏳, 🔗, ❌) instead of plain text for better visibility and clearer state distinction.
+- **Added progress indicators**: All context processing phases now emit progress messages with visual indicators (⏳ reading, 🔗 correlating, ✅ complete, ❌ error).
+- **Guaranteed callback delivery**: Injection snapshot callbacks are now guaranteed to fire in all code paths, including error scenarios, ensuring status bar always reflects current state.
+- **Better error telemetry**: All error paths now emit progress updates and update injection snapshots, improving debugging and user awareness of failures.
+
 ## 0.1.13
 
 - Removed the requirement to use `@ctx` as an explicit prompt signal in the extension UX language; context injection is now described and handled as dynamic chat context.

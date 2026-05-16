@@ -32,6 +32,26 @@ export function registerChatParticipant(
   const participant = vscode.chat.createChatParticipant(
     "ctxpack.assistant",
     async (request, chatContext, stream, token) => {
+      // Validação inicial: rejeitar prompts vazios
+      if (!request.prompt.trim()) {
+        stream.markdown("**CtxPack**: Please provide a prompt. Empty prompts cannot be processed.");
+        onInjectionSnapshot?.({
+          modeLabel: "unknown",
+          modeSource: "fallback",
+          scopeLabel: "n/a",
+          usedTags: [],
+          omittedTags: [],
+          correlatedSlots: [],
+          estimatedTokens: 0,
+          tokenBudget: 0,
+          forwardedToolsCount: 0,
+          availableToolsCount: 0,
+          status: "error",
+          errorMessage: "Empty prompt provided",
+        });
+        return { metadata: { source: "ctxpack-empty-prompt-rejection" } };
+      }
+
       const modeResolution = resolveCtxChatModeFromRequest(request, chatContext);
       const effectiveMode = resolveEffectiveMode(modeResolution.mode, request, chatContext);
       const modeLabel = buildModeLabel(modeResolution, effectiveMode);
@@ -64,14 +84,15 @@ export function registerChatParticipant(
         availableToolsCount: availableTools.length,
         status: "ready",
       };
+      // Update status to "ready" with visual indicator
       onInjectionSnapshot?.(baseSnapshot);
-      stream.progress("CtxPack: reading buffered slots...");
+      stream.progress("⏳ CtxPack: reading buffered slots...");
       onInjectionSnapshot?.({
         ...baseSnapshot,
         status: "reading",
       });
 
-      stream.progress("CtxPack: correlating prompt intent with buffered slots...");
+      stream.progress("🔗 CtxPack: correlating prompt intent with buffered slots...");
       onInjectionSnapshot?.({
         ...baseSnapshot,
         status: "correlating",
@@ -82,6 +103,7 @@ export function registerChatParticipant(
       stream.markdown(
         [
           "**CtxPack injection report**",
+          "Buffer access: confirmed (CtxPack context was attached to this request).",
           `Mode: ${modeLabel}`,
           `Scope: ${scopeLabel}`,
           `Used slots (${promptContext.usedTags.length}): ${usedList}`,
@@ -146,6 +168,7 @@ export function registerChatParticipant(
           forwardedTools,
           context.extensionMode
         );
+        stream.progress("✅ CtxPack: context injection complete.");
         onInjectionSnapshot?.({
           ...baseSnapshot,
           status: "sent",
@@ -153,9 +176,16 @@ export function registerChatParticipant(
         return result;
       } catch (err) {
         if (token.isCancellationRequested) {
+          stream.progress("⚠️ CtxPack: request cancelled.");
+          onInjectionSnapshot?.({
+            ...baseSnapshot,
+            status: "error",
+            errorMessage: "Request cancelled",
+          });
           return;
         }
         if (err instanceof vscode.LanguageModelError) {
+          stream.progress(`❌ CtxPack: model error - ${err.message}`);
           onInjectionSnapshot?.({
             ...baseSnapshot,
             status: "error",
@@ -166,6 +196,7 @@ export function registerChatParticipant(
         }
 
         const genericMessage = err instanceof Error ? err.message : String(err);
+        stream.progress(`❌ CtxPack: request failed - ${genericMessage}`);
         onInjectionSnapshot?.({
           ...baseSnapshot,
           status: "error",
@@ -525,6 +556,7 @@ function buildEmptyBufferGuide(modeLabel: string): string {
   return [
     "**CtxPack is active, but the buffer is empty**",
     `CtxPack is running in ${modeLabel} mode, but there are no buffered slots yet.`,
+    "No `@ctx` prefix is required after the participant is sticky; just send prompts normally.",
     "",
     "**How to use the extension**",
     "1. Add context to the buffer:",
