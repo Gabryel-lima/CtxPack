@@ -265,7 +265,7 @@ npm install
 npm run compile
 npm test
 npm run package
-code --install-extension ctxpack-context-0.1.13.vsix
+code --install-extension ctxpack-context-0.1.16.vsix
 ```
 
 Também é possível instalar pela interface do VS Code: Extensões -> menu `...` -> Install from VSIX...
@@ -287,7 +287,7 @@ npm test
 npm run package
 ```
 
-Isso gera o arquivo `ctxpack-context-0.1.13.vsix`.
+Isso gera o arquivo `ctxpack-context-0.1.16.vsix`.
 
 ### Dúvidas comuns
 

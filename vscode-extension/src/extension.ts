@@ -53,11 +53,17 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar.text = overrideText ?? `$(database) ctx: ${buffer.status()}${suffix}`;
     statusBar.tooltip = buildStatusTooltip(buffer, lastInjectionSnapshot);
     statusBar.show();
+    // Ensure status bar remains visible during all state transitions
+    setTimeout(() => statusBar?.show(), 100);
   };
 
   registerChatParticipant(context, buffer, (snapshot) => {
     lastInjectionSnapshot = snapshot;
     updateStatusBar();
+    // Force re-render to ensure status bar visibility during injection
+    if (statusBar) {
+      statusBar.show();
+    }
   });
 
   const ensurePackignoreForAnyCommand = (): void => {
@@ -613,24 +619,24 @@ function formatInjectionSuffix(snapshot: CtxInjectionSnapshot | undefined): stri
   }
 
   if (snapshot.status === "error") {
-    return " | ❌ error";
+    return " | ❌ BUFFER ERROR";
   }
 
   if (snapshot.status === "reading") {
-    return " | ⏳ reading";
+    return " | ⏳ READING BUFFER";
   }
 
   if (snapshot.status === "correlating") {
-    return " | 🔗 correlating";
+    return " | 🔗 CORRELATING SLOTS";
   }
 
   if (snapshot.status === "sent") {
     return snapshot.usedTags.length > 0
-      ? ` | ✅ buffer in use (${snapshot.usedTags.length} slot(s))`
-      : " | ✅ request sent (no slot selected)";
+      ? ` | ✅ BUFFER INJECTED (${snapshot.usedTags.length} slot(s))`
+      : " | ✅ REQUEST SENT";
   }
 
-  return ` | 📦 ${snapshot.usedTags.length} slot(s) ready`;
+  return ` | 📦 BUFFER READY (${snapshot.usedTags.length} slot(s))`;
 }
 
 function buildStatusTooltip(buffer: ContextRingBuffer, snapshot: CtxInjectionSnapshot | undefined): string {
@@ -652,18 +658,22 @@ function buildStatusTooltip(buffer: ContextRingBuffer, snapshot: CtxInjectionSna
     .join(", ");
   lines.push(`Correlated slots (${snapshot.correlatedSlots.length}): ${correlatedSummary || "none"}`);
   lines.push(`Context tokens: ~${snapshot.estimatedTokens} / budget ~${snapshot.tokenBudget}`);
-  lines.push(`Buffer access confirmed: ${snapshot.status === "sent" ? "yes" : "pending"}`);
-
-  if (snapshot.status === "error") {
-    lines.push(`Last context error: ${snapshot.errorMessage ?? "unknown"}`);
-  } else if (snapshot.status === "sent") {
-    lines.push("Last context status: sent to language model.");
+  lines.push("");
+  
+  if (snapshot.status === "sent") {
+    lines.push("✅ BUFFER ACCESS CONFIRMED");
+    lines.push(snapshot.usedTags.length > 0 
+      ? `Buffer context was SUCCESSFULLY INJECTED into the model (${snapshot.usedTags.length} slot(s)).`
+      : "Request sent - buffer is available for injection.");
+  } else if (snapshot.status === "error") {
+    lines.push("❌ BUFFER ACCESS FAILED");
+    lines.push(`Error: ${snapshot.errorMessage ?? "unknown error"}`);
   } else if (snapshot.status === "reading") {
-    lines.push("Last context status: reading buffered slots.");
+    lines.push("⏳ Reading buffered slots from ring buffer...");
   } else if (snapshot.status === "correlating") {
-    lines.push("Last context status: correlating prompt with slots.");
+    lines.push("⏳ Correlating your prompt with buffered slots...");
   } else {
-    lines.push("Last context status: prepared.");
+    lines.push("📦 Buffer prepared and ready for injection.");
   }
 
   return lines.join("\n");

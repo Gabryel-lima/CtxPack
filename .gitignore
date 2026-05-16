@@ -127,6 +127,7 @@ vscode-extension/out/
 *.vsix
 
 # Generated context packs at repository root
+.packignore
 /*.ctx.md
 /*.sem.ctx.md
 /*.tokens.ctx.md

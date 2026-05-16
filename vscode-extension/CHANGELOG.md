@@ -1,7 +1,13 @@
 # Changelog
 
 All notable changes to this extension will be documented in this file.
+## 0.1.16
 
+- **Reinforced visual feedback for buffer injection**: Status bar now shows persistent, high-contrast indicators: `⏳ READING BUFFER`, `🔗 CORRELATING SLOTS`, `✅ BUFFER INJECTED (N slot(s))`, and `❌ BUFFER ERROR`.
+- **Maintained @ctx as auxiliary command**: `@ctx` remains available for asking questions or getting help about CtxPack (not required for normal prompts).
+- **Improved tooltip clarity**: Tooltip now explicitly states `✅ BUFFER ACCESS CONFIRMED` or `❌ BUFFER ACCESS FAILED` with detailed status for each injection phase.
+- **Enhanced status bar persistence**: Status bar remains visible and updates throughout all injection phases (reading → correlating → sent), ensuring users always see buffer access confirmation.
+- **Updated empty buffer guidance**: Guide now clarifies that `@ctx` is for CtxPack-specific help and suggestions, while normal prompts do NOT require any prefix and automatically inject buffered context.
 ## 0.1.14
 
 - Removed remaining UX ambiguity around `@ctx`: the participant guidance now explicitly states that no `@ctx` prefix is needed after the participant is sticky.
