@@ -127,6 +127,12 @@
         "id": "ctxpack.assistant",
         "name": "ctx",
         "description": "Copilot with dynamic CtxPack buffered context",
+        "commands": [
+          {
+            "name": "run",
+            "description": "Force agentic execution with tools using CtxPack buffered context"
+          }
+        ],
         "isSticky": true
       }
     ],

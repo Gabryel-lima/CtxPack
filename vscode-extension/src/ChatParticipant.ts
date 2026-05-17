@@ -51,6 +51,17 @@ export function registerChatParticipant(
         );
       }
 
+      // Advisor mode only for empty prompt or empty buffer.
+      const advisorResult = await handleAdvisorMode(
+        request,
+        stream,
+        buffer,
+        onInjectionSnapshot
+      );
+      if (advisorResult) {
+        return advisorResult;
+      }
+
       // Modo injection padrão: sempre injeta contexto e responde
       return await handleInjectionMode(
         request,
@@ -206,7 +217,8 @@ async function handleAdvisorMode(
   lines.push("");
   lines.push("---");
   lines.push(
-    "*Use **`@ctx /ask [question]`** to get an answer with the current buffer injected into the model. " +
+    "*Use **`@ctx [question]`** to get an answer with the current buffer injected into the model. " +
+    "Use **`@ctx /run [action]`** to force agentic execution with tools. " +
     "Use **`CtxPack: Choose active slots`** to control which slots are forwarded.*"
   );
 
@@ -228,10 +240,12 @@ async function handleInjectionMode(
 ): Promise<vscode.ChatResult | undefined> {
   if (!request.prompt.trim()) {
     stream.markdown(
-      "**CtxPack `/ask`** — provide a question after the command.\n\n" +
-      "Example: `@ctx /ask how does the auth flow work?`"
+      "**CtxPack** — provide a prompt to continue.\n\n" +
+      "Examples:\n" +
+      "- `@ctx explain the auth flow`\n" +
+      "- `@ctx /run refactor auth module and apply the patch`"
     );
-    return { metadata: { source: "ctxpack-ask-empty-prompt" } };
+    return { metadata: { source: "ctxpack-empty-prompt" } };
   }
 
   let modeResolution  = resolveCtxChatModeFromRequest(request, chatContext);
@@ -301,7 +315,7 @@ async function handleInjectionMode(
   if (slots.length === 0) {
     stream.markdown(buildEmptyBufferGuide(modeLabel));
     onInjectionSnapshot?.({ ...baseSnapshot, status: "sent" });
-    return { metadata: { source: "ctxpack-ask-empty-buffer" } };
+    return { metadata: { source: "ctxpack-empty-buffer" } };
   }
 
   const usedCount   = promptContext.usedTags.length;
@@ -405,7 +419,7 @@ async function handleInjectionMode(
 // ---------------------------------------------------------------------------
 
 /**
- * Compact blockquote badge shown at the top of every /ask response.
+ * Compact blockquote badge shown at the top of every participant response.
  * Replaces the old multi-line injection report wall of text.
  *
  * Renders as:
