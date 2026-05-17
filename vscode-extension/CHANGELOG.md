@@ -2,6 +2,12 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 0.1.19
+
+- **Simplified participant command surface**: Removed the redundant `@ctx /ask` command path. `@ctx` now always injects buffered context and answers directly.
+- **Added explicit action command**: Introduced `@ctx /run` to force agentic execution with tools while still using buffered context.
+- **Advisor routing tightened**: Advisor guidance is now only used when the prompt is empty or the buffer is empty, preventing accidental detours from normal answer flows.
+
 ## 0.1.18
 
 - **Fixed empty buffer check ordering**: Buffer emptiness is now verified before printing the injection report, preventing confusing "Used slots: none" messages followed by the empty-buffer guide.
@@ -64,7 +70,7 @@ All notable changes to this extension will be documented in this file.
 - Added a command wrapper so every extension command now ensures `.packignore` exists in the active workspace.
 - Expanded the default `.packignore` template with broader conventions for dependency folders, build outputs, caches, logs, lockfiles, secret artifacts, and OS/editor metadata.
 
-## 0.1.10
+## 1.1.0
 
 - Improved `@ctx` chat mode detection by checking request and chat context metadata before falling back.
 - Fixed misleading mode fallback behavior: when mode metadata is unavailable, the report now shows `Auto (mode metadata unavailable)` and avoids forcing Ask-mode behavior.

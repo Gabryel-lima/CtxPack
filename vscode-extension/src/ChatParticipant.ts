@@ -25,6 +25,10 @@ export interface CtxInjectionSnapshot {
   errorMessage?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Participant registration
+// ---------------------------------------------------------------------------
+
 export function registerChatParticipant(
   context: vscode.ExtensionContext,
   buffer: ContextRingBuffer,
@@ -33,188 +37,30 @@ export function registerChatParticipant(
   const participant = vscode.chat.createChatParticipant(
     "ctxpack.assistant",
     async (request, chatContext, stream, token) => {
-      // Validação inicial: rejeitar prompts vazios
-      if (!request.prompt.trim()) {
-        stream.markdown("**CtxPack**: Please provide a prompt. Empty prompts cannot be processed.");
-        onInjectionSnapshot?.({
-          modeLabel: "unknown",
-          modeSource: "fallback",
-          scopeLabel: "n/a",
-          usedTags: [],
-          bufferAttached: false,
-          omittedTags: [],
-          correlatedSlots: [],
-          estimatedTokens: 0,
-          tokenBudget: 0,
-          forwardedToolsCount: 0,
-          availableToolsCount: 0,
-          status: "error",
-          errorMessage: "Empty prompt provided",
-        });
-        return { metadata: { source: "ctxpack-empty-prompt-rejection" } };
-      }
-
-      const modeResolution = resolveCtxChatModeFromRequest(request, chatContext);
-      const effectiveMode = resolveEffectiveMode(modeResolution.mode, request, chatContext);
-      const modeLabel = buildModeLabel(modeResolution, effectiveMode);
-      const availableTools = vscode.lm.tools;
-      const forwardedTools = selectToolsForModel(request.model, availableTools, effectiveMode, modeResolution.source);
-      const contextTokenBudget = getContextTokenBudget(request.model?.maxInputTokens);
-      const globalActiveTags = buffer.listActiveTagsAnyMode();
-      const hasGlobalSelection = globalActiveTags.length > 0;
-      const scopeLabel = hasGlobalSelection
-        ? `selected slots (all modes): ${globalActiveTags.join(", ")}`
-        : buffer.chatScopeSummary(effectiveMode);
-      const promptContext = hasGlobalSelection
-        ? buffer.buildPromptContextForTags(globalActiveTags, contextTokenBudget)
-        : buffer.buildPromptContext(effectiveMode, contextTokenBudget);
-      const correlations = correlateSlotsWithPrompt(request.prompt, promptContext.content);
-      const omittedSummary = promptContext.omittedTags.length
-        ? `Omitted slots because of prompt budget: ${promptContext.omittedTags.join(", ")}.`
-        : "";
-
-      const baseSnapshot: CtxInjectionSnapshot = {
-        modeLabel,
-        modeSource: modeResolution.source,
-        scopeLabel,
-        usedTags: promptContext.usedTags,
-        bufferAttached: promptContext.usedTags.length > 0,
-        omittedTags: promptContext.omittedTags,
-        correlatedSlots: correlations,
-        estimatedTokens: promptContext.estimatedTokens,
-        tokenBudget: contextTokenBudget,
-        forwardedToolsCount: forwardedTools.length,
-        availableToolsCount: availableTools.length,
-        status: "ready",
-      };
-
-      onInjectionSnapshot?.(baseSnapshot);
-
-      stream.progress("⏳ CtxPack: reading buffered slots...");
-      onInjectionSnapshot?.({
-        ...baseSnapshot,
-        status: "reading",
-      });
-
-      stream.progress("🔗 CtxPack: correlating prompt intent with buffered slots...");
-      onInjectionSnapshot?.({
-        ...baseSnapshot,
-        status: "correlating",
-      });
-
-      // FIX: check empty buffer BEFORE printing the injection report. Previously the
-      // report was streamed unconditionally (showing "Used slots: none / Omitted: none"),
-      // followed by the empty-buffer guide — confusing and noisy for the user.
-      if (buffer.listSlots().length === 0) {
-        stream.markdown(buildEmptyBufferGuide(modeLabel));
-        onInjectionSnapshot?.({
-          ...baseSnapshot,
-          status: "sent",
-        });
-        return {
-          metadata: {
-            source: "ctxpack-empty-buffer-guide",
-          },
-        };
-      }
-
-      const usedList = promptContext.usedTags.length ? promptContext.usedTags.join(", ") : "none";
-      const omittedList = promptContext.omittedTags.length ? promptContext.omittedTags.join(", ") : "none";
-      stream.markdown(
-        [
-          "**CtxPack injection report**",
-          "Buffer access: confirmed (CtxPack context was attached to this request).",
-          `Mode: ${modeLabel}`,
-          `Scope: ${scopeLabel}`,
-          `Used slots (${promptContext.usedTags.length}): ${usedList}`,
-          `Omitted slots (${promptContext.omittedTags.length}): ${omittedList}`,
-          `Estimated context tokens: ~${promptContext.estimatedTokens} / budget ~${contextTokenBudget}`,
-          `Forwarded tools: ${forwardedTools.length}/${availableTools.length}`,
-          "",
-        ].join("  \n")
-      );
-
-      const correlationMarkdown = buildCorrelationMarkdown(correlations);
-      if (correlationMarkdown) {
-        stream.markdown(correlationMarkdown);
-      }
-
-      const contextBlock = promptContext.content
-        ? [
-            `[CTXPACK SESSION CONTEXT | mode: ${modeLabel} | scope: ${scopeLabel}]`,
-            `Used slots: ${promptContext.usedTags.join(", ")}.`,
-            `Estimated context tokens: ~${promptContext.estimatedTokens}.`,
-            omittedSummary,
-            "Read the CtxPack context before answering. If it contains a semantic pack, treat its module, relation, and context lines as primary workspace evidence unless a tool discovers newer contradictory data.",
-            "If the answer depends on the buffer, explicitly ground the answer in the used slots instead of ignoring them.",
-            "If the buffer does not contain enough evidence, say that clearly and then continue with tools or general reasoning.",
-            "",
-            promptContext.content,
-          ]
-            .filter(Boolean)
-            .join("\n\n")
-        : `[CTXPACK SESSION CONTEXT | mode: ${modeLabel} | scope: empty]\n\nNo buffered context is currently selected for this mode.`;
-
-      const prompt = [
-        "You are the CtxPack participant for VS Code.",
-        `Current chat mode: ${modeLabel}.`,
-        "Respect the current Copilot chat mode when available instead of forcing a generic Q&A behavior.",
-        getModeBehaviorInstruction(modeResolution.mode, effectiveMode),
-        "Treat the CtxPack buffer as grounded workspace evidence that must be read before answering when it is present.",
-        "Do not ignore the CtxPack block. Read it first and answer from it directly when possible.",
-        // FIX: explicit instruction to avoid unnecessary tool use when the buffer already
-        // has the needed context. The previous wording ("combine it with chat history and
-        // tool results") was causing the agent to search/read files already in the buffer.
-        "Only invoke tools when the CtxPack buffer does not contain enough information to answer the request. Do not search or read files that are already represented in the buffer.",
-        contextBlock,
-      ].join("\n\n");
-
-      try {
-        const result = await sendWithToolFallback(
-          request,
+      if (request.command === "run") {
+        // Força modo agent: execução com tools
+        return await handleInjectionMode(
+          { ...request, command: undefined },
           chatContext,
           stream,
           token,
-          prompt,
-          forwardedTools,
-          context.extensionMode
+          buffer,
+          context,
+          onInjectionSnapshot,
+          /*forceAgent*/ true
         );
-        stream.progress("✅ CtxPack: context injection complete.");
-        onInjectionSnapshot?.({
-          ...baseSnapshot,
-          status: "sent",
-        });
-        return result;
-      } catch (err) {
-        if (token.isCancellationRequested) {
-          stream.progress("⚠️ CtxPack: request cancelled.");
-          onInjectionSnapshot?.({
-            ...baseSnapshot,
-            status: "error",
-            errorMessage: "Request cancelled",
-          });
-          return;
-        }
-        if (err instanceof vscode.LanguageModelError) {
-          stream.progress(`❌ CtxPack: model error - ${err.message}`);
-          onInjectionSnapshot?.({
-            ...baseSnapshot,
-            status: "error",
-            errorMessage: err.message,
-          });
-          stream.markdown(`\n\nModel error: ${err.message}`);
-          return;
-        }
-
-        const genericMessage = err instanceof Error ? err.message : String(err);
-        stream.progress(`❌ CtxPack: request failed - ${genericMessage}`);
-        onInjectionSnapshot?.({
-          ...baseSnapshot,
-          status: "error",
-          errorMessage: genericMessage,
-        });
-        stream.markdown(`\n\nFailed to query the language model. Details: ${genericMessage}`);
       }
+
+      // Modo injection padrão: sempre injeta contexto e responde
+      return await handleInjectionMode(
+        request,
+        chatContext,
+        stream,
+        token,
+        buffer,
+        context,
+        onInjectionSnapshot
+      );
     }
   );
 
@@ -223,37 +69,616 @@ export function registerChatParticipant(
   return participant;
 }
 
+async function handleAdvisorMode(
+  request: vscode.ChatRequest,
+  stream: vscode.ChatResponseStream,
+  buffer: ContextRingBuffer,
+  onInjectionSnapshot?: (snapshot: CtxInjectionSnapshot) => void
+): Promise<vscode.ChatResult | undefined> {
+  const slots = buffer.listSlots();
+  const totalTokens = buffer.totalTokenEstimate();
+  const tokenK = (totalTokens / 1000).toFixed(1);
+  const prompt = request.prompt.trim();
+  // Só entra no modo advisor se buffer está vazio ou prompt está vazio
+  if (slots.length > 0 && prompt.length > 0) {
+    // Não é advisor, deve ser handled pelo modo injection
+    return undefined;
+  }
+
+  // Snapshot so the status bar and extension UI always update even in advisor mode.
+  const advisorSnapshot = (
+    status: CtxInjectionSnapshot["status"],
+    correlations: Array<{ tag: string; score: number; matchedTerms: string[] }> = []
+  ): void => {
+    onInjectionSnapshot?.({
+      modeLabel: "Advisor",
+      modeSource: "fallback",
+      scopeLabel: slots.length > 0 ? `${slots.length} slot(s) in buffer` : "empty",
+      usedTags: [],
+      bufferAttached: false,
+      omittedTags: [],
+      correlatedSlots: correlations,
+      estimatedTokens: 0,
+      tokenBudget: 0,
+      forwardedToolsCount: 0,
+      availableToolsCount: 0,
+      status,
+    });
+  };
+
+  advisorSnapshot("reading");
+
+  if (slots.length === 0) {
+    stream.markdown(buildEmptyBufferGuide("Advisor"));
+    advisorSnapshot("sent");
+    return { metadata: { source: "ctxpack-advisor-empty" } };
+  }
+
+  // Correlate the prompt against all slot content only when there is a real query.
+  const allContent = slots.map((s) => `### [${s.tag}]\n${s.content}`).join("\n\n");
+  const correlations = prompt.length >= 3
+    ? correlateSlotsWithPrompt(prompt, allContent)
+    : [];
+
+  advisorSnapshot("correlating", correlations);
+
+  const correlationMap = new Map(correlations.map((c) => [c.tag, c]));
+
+  // Sort slots by relevance (highest first) when the user typed a prompt.
+  const sortedSlots = correlations.length > 0
+    ? [...slots].sort((a, b) => {
+        const sa = correlationMap.get(a.tag)?.score ?? 0;
+        const sb = correlationMap.get(b.tag)?.score ?? 0;
+        return sb - sa;
+      })
+    : slots;
+
+  const lines: string[] = [];
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  lines.push("### CtxPack — Buffer Advisor");
+  lines.push("");
+  lines.push(
+    `> **Buffer:** ${slots.length} slot(s) &nbsp;·&nbsp; ~${tokenK}k tokens` +
+    `&nbsp;·&nbsp; Scope: ${buffer.chatScopeSummary("ask")}`
+  );
+  lines.push("");
+
+  // ── Slot table ────────────────────────────────────────────────────────────
+  lines.push("**Buffered slots**");
+  lines.push("");
+  lines.push("| # | Slot | ~Tokens | Relevance | Active (ask · plan · agent) |");
+  lines.push("| --- | --- | --- | --- | --- |");
+
+  for (let i = 0; i < sortedSlots.length; i++) {
+    const slot = sortedSlots[i];
+    const corr = correlationMap.get(slot.tag);
+    const relevanceCell = corr
+      ? `${"█".repeat(Math.max(1, Math.round(corr.score * 5)))} ${Math.round(corr.score * 100)}%`
+      : "—";
+
+    const activeAsk   = buffer.listActiveTags("ask").includes(slot.tag)   ? "✓" : "—";
+    const activePlan  = buffer.listActiveTags("plan").includes(slot.tag)  ? "✓" : "—";
+    const activeAgent = buffer.listActiveTags("agent").includes(slot.tag) ? "✓" : "—";
+
+    lines.push(
+      `| ${i + 1} | \`${slot.tag}\` | ~${slot.tokenEstimate} | ${relevanceCell} | ${activeAsk} · ${activePlan} · ${activeAgent} |`
+    );
+  }
+
+  lines.push("");
+
+  // ── Correlation detail ────────────────────────────────────────────────────
+  if (correlations.length > 0) {
+    const topTerms = correlations
+      .flatMap((c) => c.matchedTerms)
+      .filter((v, i, arr) => arr.indexOf(v) === i)
+      .slice(0, 8);
+
+    lines.push(`**Matched terms:** \`${topTerms.join("` · `")}\``);
+    lines.push("");
+    lines.push("**Recommendations**");
+    lines.push("");
+
+    const top = correlations[0];
+    lines.push(`- Activate **\`${top.tag}\`** — highest relevance (${Math.round(top.score * 100)}%) for this prompt.`);
+
+    if (correlations.length > 1) {
+      const others = correlations.slice(1).map((c) => `\`${c.tag}\``).join(", ");
+      lines.push(`- Also relevant: ${others}`);
+    }
+
+    const irrelevant = slots.filter((s) => !correlationMap.has(s.tag));
+    if (irrelevant.length > 0) {
+      lines.push(
+        `- Consider deactivating ${irrelevant.map((s) => `\`${s.tag}\``).join(", ")} — no term overlap with this prompt.`
+      );
+    }
+
+    lines.push("- Run **`CtxPack: Choose active slots`** to scope the injection to the relevant slots.");
+  } else if (prompt.length >= 3) {
+    lines.push("> No lexical overlap found between your prompt and the buffered slots.");
+    lines.push(
+      "> Consider pushing more targeted context via **`CtxPack: Push selection to buffer`**."
+    );
+  }
+
+  lines.push("");
+  lines.push("---");
+  lines.push(
+    "*Use **`@ctx /ask [question]`** to get an answer with the current buffer injected into the model. " +
+    "Use **`CtxPack: Choose active slots`** to control which slots are forwarded.*"
+  );
+
+  stream.markdown(lines.join("\n"));
+  advisorSnapshot("sent", correlations);
+
+  return { metadata: { source: "ctxpack-advisor" } };
+}
+
+async function handleInjectionMode(
+  request: vscode.ChatRequest,
+  chatContext: vscode.ChatContext,
+  stream: vscode.ChatResponseStream,
+  token: vscode.CancellationToken,
+  buffer: ContextRingBuffer,
+  context: vscode.ExtensionContext,
+  onInjectionSnapshot?: (snapshot: CtxInjectionSnapshot) => void,
+  forceAgent?: boolean
+): Promise<vscode.ChatResult | undefined> {
+  if (!request.prompt.trim()) {
+    stream.markdown(
+      "**CtxPack `/ask`** — provide a question after the command.\n\n" +
+      "Example: `@ctx /ask how does the auth flow work?`"
+    );
+    return { metadata: { source: "ctxpack-ask-empty-prompt" } };
+  }
+
+  let modeResolution  = resolveCtxChatModeFromRequest(request, chatContext);
+  let effectiveMode   = resolveEffectiveMode(modeResolution.mode, request, chatContext);
+  if (forceAgent) {
+    modeResolution = { mode: "agent", source: "request" } as any;
+    effectiveMode = "agent";
+  }
+  const modeLabel       = buildModeLabel(modeResolution, effectiveMode);
+  const availableTools  = vscode.lm.tools;
+  const forwardedTools  = selectToolsForModel(request.model, availableTools, effectiveMode, modeResolution.source);
+  const contextTokenBudget = getContextTokenBudget(request.model?.maxInputTokens);
+  const globalActiveTags   = buffer.listActiveTagsAnyMode();
+  const hasGlobalSelection = globalActiveTags.length > 0;
+  const scopeLabel = hasGlobalSelection
+    ? `selected (all modes): ${globalActiveTags.join(", ")}`
+    : buffer.chatScopeSummary(effectiveMode);
+
+  const slots      = buffer.listSlots();
+  const totalTokens = buffer.totalTokenEstimate();
+  const tokenK     = (totalTokens / 1000).toFixed(1);
+
+  const baseSnapshot: CtxInjectionSnapshot = {
+    modeLabel,
+    modeSource:           modeResolution.source,
+    scopeLabel,
+    usedTags:             [],
+    bufferAttached:       false,
+    omittedTags:          [],
+    correlatedSlots:      [],
+    estimatedTokens:      0,
+    tokenBudget:          contextTokenBudget,
+    forwardedToolsCount:  forwardedTools.length,
+    availableToolsCount:  availableTools.length,
+    status:               "ready",
+  };
+
+  onInjectionSnapshot?.(baseSnapshot);
+
+  // ── Agent action-log messages ─────────────────────────────────────────────
+  // These appear as spinning entries in the VS Code Copilot chat action-log
+  // panel while the participant processes the request. They explicitly name
+  // CtxPack so the user always sees that the model is reading from the buffer.
+
+  stream.progress(
+    `CtxPack: loading ${slots.length} slot(s) (~${tokenK}k tokens) from buffer [${modeLabel}]`
+  );
+  onInjectionSnapshot?.({ ...baseSnapshot, status: "reading" });
+
+  const promptContext = hasGlobalSelection
+    ? buffer.buildPromptContextForTags(globalActiveTags, contextTokenBudget)
+    : buffer.buildPromptContext(effectiveMode, contextTokenBudget);
+
+  const correlations = correlateSlotsWithPrompt(request.prompt, promptContext.content);
+
+  const topTermsPreview = correlations
+    .flatMap((c) => c.matchedTerms)
+    .slice(0, 4)
+    .join(", ");
+  const correlationNote = correlations.length > 0
+    ? `${correlations.length} relevant slot(s) — ${topTermsPreview}`
+    : "no strong term overlap";
+
+  stream.progress(`CtxPack: correlating prompt → ${correlationNote}`);
+  onInjectionSnapshot?.({ ...baseSnapshot, status: "correlating", correlatedSlots: correlations });
+
+  if (slots.length === 0) {
+    stream.markdown(buildEmptyBufferGuide(modeLabel));
+    onInjectionSnapshot?.({ ...baseSnapshot, status: "sent" });
+    return { metadata: { source: "ctxpack-ask-empty-buffer" } };
+  }
+
+  const usedCount   = promptContext.usedTags.length;
+  const budgetK     = (contextTokenBudget / 1000).toFixed(1);
+
+  stream.progress(
+    `CtxPack: forwarding ${usedCount} slot(s) (~${promptContext.estimatedTokens} / ~${budgetK}k tokens) to model`
+  );
+
+  // ── Compact injection badge ───────────────────────────────────────────────
+  // Replaces the old multi-line injection report. One blockquote line with
+  // the slot list below, scannable at a glance.
+  const omittedSuffix = promptContext.omittedTags.length > 0
+    ? ` · ⚠ omitted: ${promptContext.omittedTags.map((t) => `\`${t}\``).join(", ")} (budget)`
+    : "";
+
+  stream.markdown(
+    buildInjectionBadge(
+      promptContext.usedTags,
+      promptContext.estimatedTokens,
+      contextTokenBudget,
+      modeLabel,
+      omittedSuffix
+    )
+  );
+
+  if (correlations.length > 0) {
+    stream.markdown(buildCompactCorrelationTable(correlations));
+  }
+
+  // ── Build context block and model prompt ──────────────────────────────────
+  const omittedBlock = promptContext.omittedTags.length > 0
+    ? `Omitted slots (budget exceeded): ${promptContext.omittedTags.join(", ")}.`
+    : "";
+
+  const contextBlock = promptContext.content
+    ? [
+        `[CTXPACK CONTEXT | mode: ${modeLabel} | scope: ${scopeLabel}]`,
+        `Injected slots: ${promptContext.usedTags.join(", ")}.`,
+        `Estimated tokens: ~${promptContext.estimatedTokens}.`,
+        omittedBlock,
+        "Read the CtxPack context before answering. Treat it as primary workspace evidence.",
+        "If the answer depends on the buffer, ground your response in the injected slots.",
+        "If the buffer lacks sufficient information, state that clearly then use tools or general reasoning.",
+        "",
+        promptContext.content,
+      ]
+        .filter(Boolean)
+        .join("\n\n")
+    : `[CTXPACK CONTEXT | mode: ${modeLabel} | scope: empty]\n\nNo buffered context is active for this mode.`;
+
+  const modelPrompt = [
+    "You are the CtxPack assistant for VS Code.",
+    `Current chat mode: ${modeLabel}.`,
+    "Respect the current Copilot chat mode when available.",
+    getModeBehaviorInstruction(modeResolution.mode, effectiveMode),
+    "Treat the CtxPack buffer as grounded workspace evidence. Read it first, answer from it directly when possible.",
+    "Only invoke tools when the CtxPack buffer does not contain enough information. Do not search or read files already represented in the buffer.",
+    contextBlock,
+  ].join("\n\n");
+
+  const updatedSnapshot: CtxInjectionSnapshot = {
+    ...baseSnapshot,
+    usedTags:        promptContext.usedTags,
+    bufferAttached:  promptContext.usedTags.length > 0,
+    omittedTags:     promptContext.omittedTags,
+    correlatedSlots: correlations,
+    estimatedTokens: promptContext.estimatedTokens,
+  };
+
+  try {
+    const result = await sendWithToolFallback(
+      request, chatContext, stream, token,
+      modelPrompt, forwardedTools, context.extensionMode
+    );
+
+    stream.progress(`CtxPack: injection complete — ${usedCount} slot(s) used`);
+    onInjectionSnapshot?.({ ...updatedSnapshot, status: "sent" });
+    return result;
+  } catch (err) {
+    if (token.isCancellationRequested) {
+      stream.progress("CtxPack: request cancelled");
+      onInjectionSnapshot?.({ ...updatedSnapshot, status: "error", errorMessage: "Request cancelled" });
+      return;
+    }
+    if (err instanceof vscode.LanguageModelError) {
+      stream.progress(`CtxPack: model error — ${err.message}`);
+      onInjectionSnapshot?.({ ...updatedSnapshot, status: "error", errorMessage: err.message });
+      stream.markdown(`\n\n**Model error:** ${err.message}`);
+      return;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    stream.progress(`CtxPack: request failed — ${msg}`);
+    onInjectionSnapshot?.({ ...updatedSnapshot, status: "error", errorMessage: msg });
+    stream.markdown(`\n\n**CtxPack error:** ${msg}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// UI builders
+// ---------------------------------------------------------------------------
+
+/**
+ * Compact blockquote badge shown at the top of every /ask response.
+ * Replaces the old multi-line injection report wall of text.
+ *
+ * Renders as:
+ *   > CtxPack · 2 slot(s) · ~1.8k / 2.5k tokens · Ask mode
+ *   > `slot-a` · `slot-b`
+ */
+function buildInjectionBadge(
+  usedTags: string[],
+  estimatedTokens: number,
+  tokenBudget: number,
+  modeLabel: string,
+  omittedSuffix: string
+): string {
+  const tagLine = usedTags.length > 0
+    ? usedTags.map((t) => `\`${t}\``).join(" · ")
+    : "_no slots attached_";
+
+  return (
+    `> **CtxPack** · ${usedTags.length} slot(s) · ~${estimatedTokens} / ${tokenBudget} tokens · ${modeLabel}${omittedSuffix}\n` +
+    `> ${tagLine}\n`
+  );
+}
+
+/**
+ * Compact relevance table. Only shown when the prompt has term overlap with slots.
+ */
+function buildCompactCorrelationTable(
+  correlations: Array<{ tag: string; score: number; matchedTerms: string[] }>
+): string {
+  const lines = [
+    "| Slot | Relevance | Matched terms |",
+    "| --- | --- | --- |",
+  ];
+  for (const item of correlations) {
+    const pct  = Math.round(item.score * 100);
+    const bars = "█".repeat(Math.max(1, Math.round(item.score * 5)));
+    lines.push(`| \`${item.tag}\` | ${bars} ${pct}% | ${item.matchedTerms.join(", ")} |`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+function buildEmptyBufferGuide(modeLabel: string): string {
+  return [
+    "**CtxPack — buffer is empty**",
+    "",
+    `Running in **${modeLabel}** mode, mas nenhum slot está no buffer.`,
+    "",
+    "**Adicione contexto ao buffer:**",
+    "- `CtxPack: Push selection to buffer`",
+    "- `CtxPack: Push entire file to buffer`",
+    "- `CtxPack: Push file or directory to buffer`",
+    "- `CtxPack: Generate semantic pack and push to buffer`",
+    "",
+    "**Usando @ctx:**",
+    "- `@ctx [mensagem]` — injeta contexto e responde (modo padrão)",
+    "- `@ctx /run [ação]` — executa ação agentica com tools e contexto do buffer",
+    "- `CtxPack: Open context workflow wizard` — fluxo guiado passo a passo",
+  ].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Mode resolution helpers
+// ---------------------------------------------------------------------------
+
 function getContextTokenBudget(modelMaxInputTokens: number | undefined): number {
   if (!modelMaxInputTokens || !Number.isFinite(modelMaxInputTokens)) {
     return 2500;
   }
-
   return Math.max(700, Math.min(5000, Math.floor(modelMaxInputTokens * 0.3)));
 }
 
-async function awaitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
-  let timeoutHandle: NodeJS.Timeout | undefined;
+function buildModeLabel(
+  mode: { mode: CtxResolvedChatMode; source: "request" | "context" | "fallback" },
+  effectiveMode: CtxChatMode
+): string {
+  const resolvedLabel = getCtxChatModeDisplay(mode);
+  if (mode.mode !== "auto") {
+    return resolvedLabel;
+  }
+  return `${resolvedLabel} → ${getCtxChatModeLabel(effectiveMode)} (intent)`;
+}
+
+function resolveEffectiveMode(
+  mode: CtxResolvedChatMode,
+  request: vscode.ChatRequest,
+  chatContext: vscode.ChatContext
+): CtxChatMode {
+  if (mode !== "auto") {
+    return mode;
+  }
+  return inferIntentMode(request, chatContext);
+}
+
+function inferIntentMode(
+  request: vscode.ChatRequest,
+  chatContext: vscode.ChatContext
+): CtxChatMode {
+  if (request.toolReferences.length > 0) {
+    return "agent";
+  }
+
+  const signalText = collectIntentSignals(request, chatContext).join(" ").toLowerCase();
+
+  if (/(set\s*agent|modo\s*agent|agent\s*mode|ativar\s*agent|trocar\s*para\s*agent)/u.test(signalText)) {
+    return "agent";
+  }
+  if (/(pick\s*model|choose\s*model|select\s*model|escolher\s*modelo|selecionar\s*modelo|trocar\s*modelo)/u.test(signalText)) {
+    return "ask";
+  }
+  if (/(\bplan\b|\bplano\b|arquitetura|roadmap|estrat[eé]gia|passo\s*a\s*passo|sequ[êe]ncia)/u.test(signalText)) {
+    return "plan";
+  }
+  if (/(implemente|implement|corrija|fix|refatore|refactor|edite|edit|execute|rode|run|crie|fa[çc]a|apply|patch|gera\s*c[oó]digo)/u.test(signalText)) {
+    return "agent";
+  }
+  if (/(\?|como\b|what\b|why\b|qual\b|quais\b|explique|explain|resuma|summari[sz]e)/u.test(signalText)) {
+    return "ask";
+  }
+
+  // Conservative default — avoids unexpected tool loops on unclassified prompts.
+  return "ask";
+}
+
+function collectIntentSignals(
+  request: vscode.ChatRequest,
+  chatContext: vscode.ChatContext
+): string[] {
+  const parts: string[] = [request.prompt, request.command ?? ""];
+
+  for (const reference of request.references) {
+    if (reference.modelDescription) {
+      parts.push(reference.modelDescription);
+    }
+  }
+
+  for (const turn of chatContext.history.slice(-6)) {
+    if (isRecord(turn)) {
+      const prompt  = "prompt"  in turn ? asString(turn.prompt)  : undefined;
+      const command = "command" in turn ? asString(turn.command) : undefined;
+      if (prompt)  { parts.push(prompt); }
+      if (command) { parts.push(command); }
+
+      const response = "response" in turn ? turn.response : undefined;
+      if (Array.isArray(response)) {
+        for (const part of response) {
+          if (!isRecord(part)) { continue; }
+          const commandValue = isRecord(part.value) ? part.value : undefined;
+          const title = commandValue ? asString(commandValue.title) : undefined;
+          if (title) { parts.push(title); }
+        }
+      }
+    }
+  }
+
+  return parts.filter((v) => v.trim().length > 0);
+}
+
+function getModeBehaviorInstruction(
+  mode: CtxResolvedChatMode,
+  effectiveMode: CtxChatMode
+): string {
+  if (mode === "auto") {
+    return (
+      `Mode metadata is unavailable: inferred intent is ${getCtxChatModeLabel(effectiveMode)}. ` +
+      "Prioritize answering from the CtxPack context. Only invoke tools when the buffer clearly lacks the information needed."
+    );
+  }
+  if (mode === "agent") {
+    return "In Agent mode, keep the request agentic, execute concrete steps, and use tools when they improve correctness.";
+  }
+  if (mode === "plan") {
+    return "In Plan mode, prioritize planning and sequencing over direct execution unless the user explicitly asks to act.";
+  }
+  if (mode === "ask") {
+    return "In Ask mode, answer directly first. Do not block tool usage or edits when the user explicitly requests them.";
+  }
+  return "Infer intent from the latest user prompt and history. Use tools only when the buffer lacks sufficient context.";
+}
+
+// ---------------------------------------------------------------------------
+// Tool selection
+// ---------------------------------------------------------------------------
+
+function shouldForwardToolsForMode(mode: CtxChatMode): boolean {
+  return mode === "agent" || mode === "ask";
+}
+
+function getToolLimitFromModel(model: vscode.LanguageModelChat | undefined): number {
+  if (!model) { return 0; }
+  // Conservative ceiling — provider-side limit not exposed in this API version.
+  return 48;
+}
+
+function selectToolsForModel(
+  model: vscode.LanguageModelChat | undefined,
+  tools: readonly vscode.LanguageModelToolInformation[],
+  mode: CtxChatMode,
+  modeSource: "request" | "context" | "fallback"
+): vscode.LanguageModelToolInformation[] {
+  if (tools.length === 0)            { return []; }
+  if (modeSource === "fallback")     { return []; }
+  if (!shouldForwardToolsForMode(mode)) { return []; }
+
+  const modeLimit = mode === "agent" ? 48 : 24;
+  const limit = Math.min(modeLimit, getToolLimitFromModel(model));
+  if (limit <= 0) { return []; }
+
+  return tools.length <= limit ? [...tools] : [...tools].slice(0, limit);
+}
+
+// ---------------------------------------------------------------------------
+// Request sender with tool-limit retry
+// ---------------------------------------------------------------------------
+
+async function sendWithToolFallback(
+  request: vscode.ChatRequest,
+  chatContext: vscode.ChatContext,
+  stream: vscode.ChatResponseStream,
+  token: vscode.CancellationToken,
+  prompt: string,
+  tools: readonly vscode.LanguageModelToolInformation[],
+  extensionMode: vscode.ExtensionMode
+): Promise<vscode.ChatResult> {
+  // Sentinel contract:
+  //   null  → omit the tools key (model-managed, only used in the retry path)
+  //   []    → pass tools: [] explicitly (blocks implicit provider-side tool injection)
+  //   [...] → explicit curated list
+  const sendRequest = (explicitTools: readonly vscode.LanguageModelToolInformation[] | null) =>
+    chatUtils.sendChatParticipantRequest(
+      request,
+      chatContext,
+      {
+        prompt,
+        responseStreamOptions: { stream, references: true, responseText: true },
+        ...(explicitTools !== null ? { tools: explicitTools } : {}),
+        extensionMode,
+      },
+      token
+    );
+
+  const hasExplicitTools = tools.length > 0;
+  // Pass [] when no tools are selected to block implicit provider-side tool access.
+  const firstAttempt = sendRequest(hasExplicitTools ? tools : []);
 
   try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          reject(new Error(timeoutMessage));
-        }, timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
+    return await awaitWithTimeout(
+      firstAttempt.result,
+      hasExplicitTools ? 90_000 : 180_000,
+      "CtxPack request timed out."
+    );
+  } catch (error) {
+    const shouldRetry =
+      hasExplicitTools && (isToolCountLimitError(error) || isTimeoutError(error));
+    if (!shouldRetry) { throw error; }
+
+    const note = isToolCountLimitError(error)
+      ? "CtxPack: tool list exceeded model limit — retrying with model-managed tools."
+      : "CtxPack: request timed out with explicit tools — retrying with model-managed tools.";
+    stream.markdown(`\n\n_${note}_`);
+
+    // null = omit tools key so the provider falls back to its own tool management.
+    const fallback = sendRequest(null);
+    return await awaitWithTimeout(
+      fallback.result,
+      180_000,
+      "CtxPack request timed out after tool fallback."
+    );
   }
 }
 
-function isTimeoutError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /timed out while waiting for the language model response/i.test(message);
-}
+// ---------------------------------------------------------------------------
+// Correlation helpers
+// ---------------------------------------------------------------------------
 
 function tokenizeForCorrelation(text: string): string[] {
   return text
@@ -266,14 +691,9 @@ function parseSlotSections(content: string): Array<{ tag: string; body: string }
   const sections: Array<{ tag: string; body: string }> = [];
   const regex = /^### \[(.+?)\]\n([\s\S]*?)(?=\n\n### \[|$)/gm;
   let match: RegExpExecArray | null;
-
   while ((match = regex.exec(content)) !== null) {
-    sections.push({
-      tag: match[1].trim(),
-      body: match[2].trim(),
-    });
+    sections.push({ tag: match[1].trim(), body: match[2].trim() });
   }
-
   return sections;
 }
 
@@ -282,19 +702,15 @@ function correlateSlotsWithPrompt(
   promptContextContent: string
 ): Array<{ tag: string; score: number; matchedTerms: string[] }> {
   const promptTerms = new Set(tokenizeForCorrelation(prompt));
-  if (promptTerms.size === 0) {
-    return [];
-  }
+  if (promptTerms.size === 0) { return []; }
 
   const sections = parseSlotSections(promptContextContent);
   const result: Array<{ tag: string; score: number; matchedTerms: string[] }> = [];
 
   for (const section of sections) {
-    const slotTerms = new Set(tokenizeForCorrelation(section.body));
-    const matchedTerms = [...promptTerms].filter((term) => slotTerms.has(term)).slice(0, 6);
-    if (matchedTerms.length === 0) {
-      continue;
-    }
+    const slotTerms   = new Set(tokenizeForCorrelation(section.body));
+    const matchedTerms = [...promptTerms].filter((t) => slotTerms.has(t)).slice(0, 6);
+    if (matchedTerms.length === 0) { continue; }
 
     const rawScore = matchedTerms.length / Math.max(1, Math.min(promptTerms.size, 12));
     result.push({
@@ -307,154 +723,36 @@ function correlateSlotsWithPrompt(
   return result.sort((a, b) => b.score - a.score).slice(0, 5);
 }
 
-function buildCorrelationMarkdown(correlations: Array<{ tag: string; score: number; matchedTerms: string[] }>): string {
-  if (correlations.length === 0) {
-    return "**CtxPack slot correlation**  \nNo strong lexical overlap detected between the prompt and buffered slots.";
+// ---------------------------------------------------------------------------
+// Shared utilities
+// ---------------------------------------------------------------------------
+
+async function awaitWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string
+): Promise<T> {
+  let handle: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        handle = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (handle) { clearTimeout(handle); }
   }
-
-  const lines = [
-    "**CtxPack slot correlation**",
-    "| Slot | Correlation | Matched terms |",
-    "| --- | --- | --- |",
-  ];
-
-  for (const item of correlations) {
-    const percentage = Math.round(item.score * 100);
-    const bars = "#".repeat(Math.max(1, Math.round(item.score * 8)));
-    lines.push(`| ${item.tag} | ${bars} ${percentage}% | ${item.matchedTerms.join(", ")} |`);
-  }
-
-  return `${lines.join("\n")}\n`;
 }
 
-/**
- * Determines if tools should be forwarded to the language model based on the current chat mode.
- *
- * Tool availability per mode:
- * - "agent": Full tool access for autonomous task execution
- * - "ask": Tools available for natural use by the AI (e.g., file operations, searches)
- * - "plan": Tools disabled - mode is read-only for strategic planning only
- *
- * @param mode The current CtxPack chat mode
- * @returns true if tools should be forwarded, false otherwise
- */
-function shouldForwardToolsForMode(mode: CtxChatMode): boolean {
-  return mode === "agent" || mode === "ask";
+function isTimeoutError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /timed out/i.test(msg);
 }
 
-function buildModeLabel(mode: { mode: CtxResolvedChatMode; source: "request" | "context" | "fallback" }, effectiveMode: CtxChatMode): string {
-  const resolvedLabel = getCtxChatModeDisplay(mode);
-  if (mode.mode !== "auto") {
-    return resolvedLabel;
-  }
-
-  return `${resolvedLabel} -> ${getCtxChatModeLabel(effectiveMode)} (intent)`;
-}
-
-function resolveEffectiveMode(mode: CtxResolvedChatMode, request: vscode.ChatRequest, chatContext: vscode.ChatContext): CtxChatMode {
-  if (mode !== "auto") {
-    return mode;
-  }
-
-  return inferIntentMode(request, chatContext);
-}
-
-function inferIntentMode(request: vscode.ChatRequest, chatContext: vscode.ChatContext): CtxChatMode {
-  if (request.toolReferences.length > 0) {
-    return "agent";
-  }
-
-  const signalText = collectIntentSignals(request, chatContext).join(" ").toLowerCase();
-
-  // Distinguish explicit agent activation from generic model picking.
-  if (/(set\s*agent|modo\s*agent|agent\s*mode|ativar\s*agent|trocar\s*para\s*agent)/u.test(signalText)) {
-    return "agent";
-  }
-
-  if (/(pick\s*model|choose\s*model|select\s*model|escolher\s*modelo|selecionar\s*modelo|trocar\s*modelo)/u.test(signalText)) {
-    return "ask";
-  }
-
-  if (/(\bplan\b|\bplano\b|arquitetura|roadmap|estrat[eé]gia|passo\s*a\s*passo|sequ[êe]ncia)/u.test(signalText)) {
-    return "plan";
-  }
-
-  if (/(implemente|implement|corrija|fix|refatore|refactor|edite|edit|execute|rode|run|crie|fa[çc]a|apply|patch|gera\s*c[oó]digo)/u.test(signalText)) {
-    return "agent";
-  }
-
-  if (/(\?|como\b|what\b|why\b|qual\b|quais\b|explique|explain|resuma|summari[sz]e)/u.test(signalText)) {
-    return "ask";
-  }
-
-  // FIX: was "agent" — defaulting to agent caused the model to invoke tools on every
-  // unclassified prompt, including simple questions that the buffer could answer directly.
-  // "ask" is the safer default: it keeps the request answerable without tool loops.
-  return "ask";
-}
-
-function collectIntentSignals(request: vscode.ChatRequest, chatContext: vscode.ChatContext): string[] {
-  const parts: string[] = [request.prompt, request.command ?? ""];
-
-  for (const reference of request.references) {
-    if (reference.modelDescription) {
-      parts.push(reference.modelDescription);
-    }
-  }
-
-  for (const turn of chatContext.history.slice(-6)) {
-    if (isRecord(turn)) {
-      const prompt = "prompt" in turn ? asString(turn.prompt) : undefined;
-      const command = "command" in turn ? asString(turn.command) : undefined;
-      if (prompt) {
-        parts.push(prompt);
-      }
-      if (command) {
-        parts.push(command);
-      }
-
-      const response = "response" in turn ? turn.response : undefined;
-      if (Array.isArray(response)) {
-        for (const part of response) {
-          if (!isRecord(part)) {
-            continue;
-          }
-
-          const commandValue = isRecord(part.value) ? part.value : undefined;
-          const title = commandValue ? asString(commandValue.title) : undefined;
-          if (title) {
-            parts.push(title);
-          }
-        }
-      }
-    }
-  }
-
-  return parts.filter((value) => value.trim().length > 0);
-}
-
-function getModeBehaviorInstruction(mode: CtxResolvedChatMode, effectiveMode: CtxChatMode): string {
-  if (mode === "auto") {
-    // FIX: the previous instruction said "keep execution unblocked, proceed agentically"
-    // while tools were simultaneously suppressed (modeSource=fallback → tools=[]).
-    // The contradiction made the model attempt implicit tool calls through the provider,
-    // causing search loops. Now we explicitly tell it to answer from the buffer first.
-    return `Mode metadata is unavailable: inferred intent is ${getCtxChatModeLabel(effectiveMode)}. Prioritize answering from the CtxPack context. Only invoke tools when the buffer clearly lacks the information needed to answer the request.`;
-  }
-
-  if (mode === "agent") {
-    return "In Agent mode, keep the request agentic, execute concrete steps, and use tools naturally when they improve correctness.";
-  }
-
-  if (mode === "plan") {
-    return "In Plan mode, prioritize planning and sequencing over direct execution unless the user explicitly asks to act.";
-  }
-
-  if (mode === "ask") {
-    return "In Ask mode, answer directly first, but do not block tool usage or edits when the user explicitly asks to implement changes.";
-  }
-
-  return "Mode metadata is unavailable: infer intent from the latest user prompt and history, keep execution unblocked, and use tools when they improve correctness.";
+function isToolCountLimitError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /cannot have more than\s+\d+\s+tools per request/i.test(msg);
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -463,145 +761,4 @@ function isRecord(value: unknown): value is Record<string, any> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function isToolCountLimitError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /cannot have more than\s+\d+\s+tools per request/i.test(message);
-}
-
-function getToolLimitFromModel(model: vscode.LanguageModelChat | undefined): number {
-  if (!model) {
-    return 0;
-  }
-
-  // ChatRequest.model (LanguageModelChat) does not expose toolCalling capability in this API version.
-  // Keep a conservative ceiling to reduce latency and avoid provider-side tool-list limits.
-  return 48;
-}
-
-function selectToolsForModel(
-  model: vscode.LanguageModelChat | undefined,
-  tools: readonly vscode.LanguageModelToolInformation[],
-  mode: CtxChatMode,
-  modeSource: "request" | "context" | "fallback"
-): vscode.LanguageModelToolInformation[] {
-  if (tools.length === 0) {
-    return [];
-  }
-
-  // In fallback mode (metadata unavailable), avoid forwarding a large explicit tool list.
-  // Let the provider manage tools implicitly to reduce request payload and timeout risk.
-  if (modeSource === "fallback") {
-    return [];
-  }
-
-  const allowToolsByMode = shouldForwardToolsForMode(mode);
-  if (!allowToolsByMode) {
-    return [];
-  }
-
-  const modeLimit = mode === "agent" ? 48 : 24;
-  const limit = Math.min(modeLimit, getToolLimitFromModel(model));
-  if (limit <= 0) {
-    return [];
-  }
-
-  if (tools.length <= limit) {
-    return [...tools];
-  }
-
-  return [...tools].slice(0, limit);
-}
-
-async function sendWithToolFallback(
-  request: vscode.ChatRequest,
-  chatContext: vscode.ChatContext,
-  stream: vscode.ChatResponseStream,
-  token: vscode.CancellationToken,
-  prompt: string,
-  tools: readonly vscode.LanguageModelToolInformation[],
-  extensionMode: vscode.ExtensionMode
-): Promise<vscode.ChatResult> {
-  // FIX: use a `null` sentinel to distinguish "let the model manage tools natively"
-  // from "explicitly pass no tools". Previously, passing `undefined` for the tools
-  // parameter omitted the key entirely from the request options — the VS Code / Copilot
-  // API then defaulted to forwarding ALL available tools implicitly, causing the model
-  // to invoke searches and file reads even when we wanted zero tool access (e.g. when
-  // modeSource === "fallback" or mode === "plan"). Passing `tools: []` explicitly tells
-  // the provider the caller has intentionally disabled tool access for this request.
-  //
-  //   null  → omit the tools key (model-managed, only used in the tool-limit retry path)
-  //   []    → pass tools: [] explicitly (blocks implicit provider-side tool injection)
-  //   [...] → explicit curated tool list
-  const sendRequest = (explicitTools: readonly vscode.LanguageModelToolInformation[] | null) =>
-    chatUtils.sendChatParticipantRequest(
-      request,
-      chatContext,
-      {
-        prompt,
-        responseStreamOptions: {
-          stream,
-          references: true,
-          responseText: true,
-        },
-        ...(explicitTools !== null ? { tools: explicitTools } : {}),
-        extensionMode,
-      },
-      token
-    );
-
-  const hasExplicitTools = tools.length > 0;
-  // Pass tools explicitly — use [] when none are selected so implicit tool access is blocked.
-  const firstAttempt = sendRequest(hasExplicitTools ? tools : []);
-
-  try {
-    return await awaitWithTimeout(
-      firstAttempt.result,
-      hasExplicitTools ? 90000 : 180000,
-      "CtxPack request timed out while waiting for the language model response."
-    );
-  } catch (error) {
-    const shouldRetryWithoutTools = hasExplicitTools && (isToolCountLimitError(error) || isTimeoutError(error));
-    if (!shouldRetryWithoutTools) {
-      throw error;
-    }
-
-    const note = isToolCountLimitError(error)
-      ? "CtxPack note: tool list exceeded the model limit; retrying with model-managed tool set."
-      : "CtxPack note: request with explicit tools timed out; retrying with model-managed tool set.";
-    stream.markdown(`\n\n${note}`);
-    // null = omit tools key entirely so the provider falls back to its native tool management.
-    const fallbackRequest = sendRequest(null);
-
-    return await awaitWithTimeout(
-      fallbackRequest.result,
-      180000,
-      "CtxPack request timed out while waiting for the language model response after tool fallback."
-    );
-  }
-}
-
-function buildEmptyBufferGuide(modeLabel: string): string {
-  return [
-    "**CtxPack is active, but the buffer is empty**",
-    `CtxPack is running in ${modeLabel} mode, but there are no buffered slots yet.`,
-    "",
-    "**How to use the extension**",
-    "1. Add context to the buffer:",
-    "   - `CtxPack: Push selection to buffer`",
-    "   - `CtxPack: Push entire file to buffer`",
-    "   - `CtxPack: Push file or directory to buffer`",
-    "   - `CtxPack: Generate semantic pack and push to buffer`",
-    "2. (Optional) Scope what dynamic injection uses with `CtxPack: Choose active slots for dynamic context`.",
-    "3. Send your prompt normally and CtxPack will inject the selected slots into the chat.",
-    "",
-    "**About the @ctx command**",
-    "The `@ctx` participant is available for asking questions or getting suggestions about CtxPack itself.",
-    "You do NOT need `@ctx` prefix for normal prompts—context injection happens automatically.",
-    "Use `@ctx` when you need help understanding how to use CtxPack or debugging buffer issues.",
-    "",
-    "**Quick workflow**",
-    "Use `CtxPack: Open context workflow wizard` from the Command Palette to run the full flow step by step.",
-  ].join("\n");
 }

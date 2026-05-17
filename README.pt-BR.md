@@ -153,6 +153,8 @@ Referência visual rápida do fluxo: veja a imagem em [vscode-extension/README.m
 Comportamento importante:
 
 - Você não precisa mais prefixar cada prompt com `@ctx` para repetir injeção.
+- `@ctx [prompt]` é o fluxo padrão do participante: injeta contexto e responde.
+- `@ctx /run [ação]` força execução agentic com tools usando o mesmo contexto em buffer.
 - A injeção dinâmica de contexto não coleta arquivos sozinha.
 - A injeção usa apenas o que já está no buffer.
 - O buffer só muda quando você faz push, remove slots, ou limpa a sessão.
@@ -192,6 +194,8 @@ Observação: quando houver slots ativos selecionados, eles são priorizados com
 5. Inspecione ou remova slots antigos se necessário.
 6. No Copilot Chat com o participante CtxPack, envie o prompt normalmente depois que o buffer e o escopo ativo refletirem a tarefa atual.
 7. Ao trocar de assunto/tarefa, limpe com `ctxpack.clear` ou remova o filtro ativo.
+
+Quando você quiser disparar explicitamente um fluxo de execução, use `@ctx /run` no lugar do fluxo padrão de resposta.
 
 ### Comandos da extensão
 

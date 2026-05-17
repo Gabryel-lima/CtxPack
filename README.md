@@ -161,6 +161,8 @@ Visual flow reference: see the extension guide image in [vscode-extension/README
 Important behavior:
 
 - You no longer need to prepend prompts with `@ctx` for repeated injections.
+- `@ctx [prompt]` is the default participant path: inject context and answer.
+- `@ctx /run [action]` forces agentic execution with tools using the same buffered context.
 - Dynamic context injection does not collect files by itself.
 - Dynamic injection uses only what is already in the buffer.
 - The buffer changes only when you push content or remove/clear slots.
@@ -193,6 +195,8 @@ Rule of thumb: if injected context improves precision, keep it enabled; if it ad
 5. Inspect or remove stale slots if needed.
 6. Ask in Copilot Chat with the CtxPack participant after the buffer and active scope match your current task.
 7. Clear the buffer (`ctxpack.clear`) or remove the active filter when switching task/topic.
+
+When you want to explicitly trigger an execution workflow, use `@ctx /run` instead of the default answer flow.
 
 ### Extension commands
 

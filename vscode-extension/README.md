@@ -57,6 +57,11 @@ CtxPack now injects buffered context dynamically when using the CtxPack chat par
 
 You no longer need to prepend prompts with `@ctx` for repeated injections.
 
+When you do want explicit participant commands:
+
+- `@ctx [your prompt]`: default path, injects context and answers.
+- `@ctx /run [your action]`: agentic path, injects context and executes with tools.
+
 The scope has two modes:
 
 - Full-buffer mode: injects every slot currently stored.
@@ -208,6 +213,12 @@ That means the practical split is:
 5. Choose active slots when you want injection to reuse only a specific subset on every iteration.
 6. Open Copilot Chat with the CtxPack participant and prompt normally.
 7. Inspect, prune, or clear the buffer when the task changes.
+
+If you need to force an autonomous execution flow instead of a direct answer, use:
+
+```text
+@ctx /run refactor this module and apply the patch
+```
 
 ## Typical Workflow
 
