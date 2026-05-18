@@ -1,4 +1,4 @@
-from dsl_schema import DSLContext
+from dsl_schema import DSLContext, ProjectNode
 
 HEADER_INSTRUCTION = (
     "<!-- DSL SEMANTIC: PRJ=project, DEP=dependencies, MOD=module, "
@@ -7,11 +7,11 @@ HEADER_INSTRUCTION = (
 )
 
 def build_dsl(ctx: DSLContext) -> str:
-    lines = [HEADER_INSTRUCTION]
-    p = ctx.project
+    lines: list[str] = [HEADER_INSTRUCTION]
+    p: ProjectNode = ctx.project
 
     # PRJ
-    prj = f"PRJ:{p.name}"
+    prj: str = f"PRJ:{p.name}"
     if p.languages:
         prj += f"|lang:{','.join(p.languages)}"
     if p.arch:
@@ -28,7 +28,7 @@ def build_dsl(ctx: DSLContext) -> str:
 
     # MOD
     for m in ctx.modules:
-        line = f"MOD:{m.name}|file:{m.filepath}"
+        line: str = f"MOD:{m.name}|file:{m.filepath}"
         if m.role:
             line += f"|role:{m.role}"
         line += f"|state:{m.state}"

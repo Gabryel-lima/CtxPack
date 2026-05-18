@@ -40,7 +40,7 @@ export function registerChatParticipant(
       if (request.command === "run") {
         // Força modo agent: execução com tools
         return await handleInjectionMode(
-          { ...request, command: undefined },
+          request,
           chatContext,
           stream,
           token,
@@ -257,6 +257,23 @@ async function handleInjectionMode(
   const modeLabel       = buildModeLabel(modeResolution, effectiveMode);
   const availableTools  = vscode.lm.tools;
   const forwardedTools  = selectToolsForModel(request.model, availableTools, effectiveMode, modeResolution.source);
+  const debugRouting = vscode.workspace
+    .getConfiguration("ctxpack")
+    .get<boolean>("debugPromptRouting", false);
+
+  if (debugRouting) {
+    console.log("[CtxPack] prompt-routing", {
+      commandTriggered: request.command ?? "none",
+      mode: effectiveMode,
+      modeSource: modeResolution.source,
+      prompt: request.prompt,
+      toolsEnabled: forwardedTools.length > 0,
+      forwardedToolsCount: forwardedTools.length,
+      availableToolsCount: availableTools.length,
+      model: describeModel(request.model),
+    });
+  }
+
   const contextTokenBudget = getContextTokenBudget(request.model?.maxInputTokens);
   const globalActiveTags   = buffer.listActiveTagsAnyMode();
   const hasGlobalSelection = globalActiveTags.length > 0;
@@ -532,7 +549,7 @@ function inferIntentMode(
   if (/(\bplan\b|\bplano\b|arquitetura|roadmap|estrat[eé]gia|passo\s*a\s*passo|sequ[êe]ncia)/u.test(signalText)) {
     return "plan";
   }
-  if (/(implemente|implement|corrija|fix|refatore|refactor|edite|edit|execute|rode|run|crie|fa[çc]a|apply|patch|gera\s*c[oó]digo)/u.test(signalText)) {
+  if (/(implemente|implement|corrija|fix|refatore|refactor|edite|edit|execute|rode|run|crie|fa[çc]a|apply|patch|rename|renomeie|rename\s+all|substitua|replace|modifique|modify|change\s+all|gera\s*c[oó]digo)/u.test(signalText)) {
     return "agent";
   }
   if (/(\?|como\b|what\b|why\b|qual\b|quais\b|explique|explain|resuma|summari[sz]e)/u.test(signalText)) {
@@ -588,7 +605,7 @@ function getModeBehaviorInstruction(
     );
   }
   if (mode === "agent") {
-    return "In Agent mode, keep the request agentic, execute concrete steps, and use tools when they improve correctness.";
+    return "In Agent mode, execute the requested modification directly when possible, report concrete actions taken, and use tools when they improve correctness.";
   }
   if (mode === "plan") {
     return "In Plan mode, prioritize planning and sequencing over direct execution unless the user explicitly asks to act.";
@@ -620,7 +637,7 @@ function selectToolsForModel(
   modeSource: "request" | "context" | "fallback"
 ): vscode.LanguageModelToolInformation[] {
   if (tools.length === 0)            { return []; }
-  if (modeSource === "fallback")     { return []; }
+  if (modeSource === "fallback" && mode !== "agent") { return []; }
   if (!shouldForwardToolsForMode(mode)) { return []; }
 
   const modeLimit = mode === "agent" ? 48 : 24;
@@ -767,6 +784,25 @@ function isTimeoutError(error: unknown): boolean {
 function isToolCountLimitError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error);
   return /cannot have more than\s+\d+\s+tools per request/i.test(msg);
+}
+
+function describeModel(model: vscode.LanguageModelChat | undefined): string {
+  if (!model) {
+    return "unknown";
+  }
+
+  const raw = model as unknown as {
+    id?: string;
+    name?: string;
+    vendor?: string;
+    family?: string;
+    version?: string;
+  };
+
+  const parts = [raw.id, raw.name, raw.vendor, raw.family, raw.version]
+    .filter((part): part is string => typeof part === "string" && part.trim().length > 0);
+
+  return parts.length > 0 ? parts.join("/") : "unknown";
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

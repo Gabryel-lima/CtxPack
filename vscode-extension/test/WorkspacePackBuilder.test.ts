@@ -66,14 +66,28 @@ describe("WorkspacePackBuilder", () => {
 
   it("normalizes chat modes from VS Code mode names", () => {
     expect(resolveCtxChatMode("Agent")).toBe("agent");
+    expect(resolveCtxChatMode("Task")).toBe("agent");
+    expect(resolveCtxChatMode("Edit")).toBe("agent");
     expect(resolveCtxChatMode("Plan")).toBe("plan");
     expect(resolveCtxChatMode(undefined)).toBe("ask");
   });
 
   it("resolves mode from request shape variants", () => {
     expect(resolveCtxChatModeFromRequest({ modeInstructions2: { name: "Agent" } }).mode).toBe("agent");
+    expect(resolveCtxChatModeFromRequest({ modeInstructions2: { name: "Task" } }).mode).toBe("agent");
     expect(resolveCtxChatModeFromRequest({ modeInstructions: { name: "Plan" } }).mode).toBe("plan");
     expect(resolveCtxChatModeFromRequest({ modeName: "Ask" }).mode).toBe("ask");
+  });
+
+  it("infers agent mode from mode instruction content with task keywords", () => {
+    const resolved = resolveCtxChatModeFromRequest({
+      modeInstructions2: {
+        content: "Task mode: execute edits directly and apply changes",
+      },
+    });
+
+    expect(resolved.mode).toBe("agent");
+    expect(resolved.source).toBe("request");
   });
 
   it("resolves mode from chat context when request lacks mode", () => {

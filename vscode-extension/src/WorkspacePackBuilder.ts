@@ -266,7 +266,15 @@ export function getCtxChatModeLabel(mode: CtxChatMode): string {
 
 export function resolveCtxChatMode(name: string | undefined): CtxChatMode {
   const normalized = (name ?? "").trim().toLowerCase();
-  if (normalized.includes("agent") || normalized.includes("agente")) {
+  if (
+    normalized.includes("agent") ||
+    normalized.includes("agente") ||
+    normalized.includes("task") ||
+    normalized.includes("tarefa") ||
+    normalized.includes("edit") ||
+    normalized.includes("execute") ||
+    normalized.includes("action")
+  ) {
     return "agent";
   }
   if (normalized.includes("plan") || normalized.includes("plano")) {
@@ -380,7 +388,15 @@ function extractModeNameFromRequest(requestLike: unknown): string | undefined {
 
 function inferModeKeyword(text: string): string | undefined {
   const normalized = text.toLowerCase();
-  if (normalized.includes("agent") || normalized.includes("agente")) {
+  if (
+    normalized.includes("agent") ||
+    normalized.includes("agente") ||
+    normalized.includes("task") ||
+    normalized.includes("tarefa") ||
+    normalized.includes("edit") ||
+    normalized.includes("execute") ||
+    normalized.includes("action")
+  ) {
     return "agent";
   }
   if (normalized.includes("plan") || normalized.includes("plano")) {
