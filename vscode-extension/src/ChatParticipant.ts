@@ -251,7 +251,7 @@ async function handleInjectionMode(
   let modeResolution  = resolveCtxChatModeFromRequest(request, chatContext);
   let effectiveMode   = resolveEffectiveMode(modeResolution.mode, request, chatContext);
   if (forceAgent) {
-    modeResolution = { mode: "agent", source: "request" } as any;
+    modeResolution = { mode: "agent", source: "request" };
     effectiveMode = "agent";
   }
   const modeLabel       = buildModeLabel(modeResolution, effectiveMode);
@@ -406,7 +406,8 @@ async function handleInjectionMode(
   try {
     const result = await sendWithToolFallback(
       request, chatContext, stream, token,
-      modelPrompt, forwardedTools, context.extensionMode
+      modelPrompt, forwardedTools, context.extensionMode,
+      forceAgent
     );
 
     stream.progress(`CtxPack: injection complete — ${usedCount} slot(s) used`);
@@ -605,7 +606,11 @@ function getModeBehaviorInstruction(
     );
   }
   if (mode === "agent") {
-    return "In Agent mode, execute the requested modification directly when possible, report concrete actions taken, and use tools when they improve correctness.";
+    return (
+      "In Agent mode (/run), you MUST apply changes directly to workspace files using the available editing tools. " +
+      "Do NOT describe or suggest changes in text — execute them with tools. " +
+      "After completing the task, briefly report what was done."
+    );
   }
   if (mode === "plan") {
     return "In Plan mode, prioritize planning and sequencing over direct execution unless the user explicitly asks to act.";
@@ -658,7 +663,8 @@ async function sendWithToolFallback(
   token: vscode.CancellationToken,
   prompt: string,
   tools: readonly vscode.LanguageModelToolInformation[],
-  extensionMode: vscode.ExtensionMode
+  extensionMode: vscode.ExtensionMode,
+  isForceAgent?: boolean
 ): Promise<vscode.ChatResult> {
   // Sentinel contract:
   //   null  → omit the tools key (model-managed, only used in the retry path)
@@ -681,13 +687,23 @@ async function sendWithToolFallback(
   // Pass [] when no tools are selected to block implicit provider-side tool access.
   const firstAttempt = sendRequest(hasExplicitTools ? tools : []);
 
+  // Agent mode (/run) gets a much longer first-attempt window so complex multi-step
+  // edits have time to complete without triggering the null-tool fallback (which
+  // causes the model to suggest rather than apply edits).
+  const firstTimeout = isForceAgent ? 300_000 : (hasExplicitTools ? 90_000 : 180_000);
+
   try {
     return await awaitWithTimeout(
       firstAttempt.result,
-      hasExplicitTools ? 90_000 : 180_000,
+      firstTimeout,
       "CtxPack request timed out."
     );
   } catch (error) {
+    // In forced agent mode (/run), never fall back to provider-managed tools on timeout:
+    // doing so strips the file-editing tools and causes the model to suggest edits
+    // instead of applying them. Re-throw so the user gets an explicit error.
+    if (isForceAgent && isTimeoutError(error)) { throw error; }
+
     const shouldRetry =
       hasExplicitTools && (isToolCountLimitError(error) || isTimeoutError(error));
     if (!shouldRetry) { throw error; }

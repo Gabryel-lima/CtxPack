@@ -97,6 +97,7 @@ CtxPack respects the current Copilot Chat mode and adapts tool availability acco
 - In `Auto`, CtxPack infers effective intent from request signals (for example, distinguishing `Set Agent` from `Pick Model`) so behavior remains dynamic.
 - Tool forwarding is capped to a safe maximum to avoid provider-side tool-count rejections.
 - If a provider still rejects a request because of tool count, CtxPack retries automatically with a model-managed tool set.
+- In `/run` (forced agent) mode, a timeout surfaces as an explicit error rather than silently falling back to a suggestion-only response — preserving the guarantee that agent mode always applies edits with tools.
 - Every extension command now ensures a workspace `.packignore` exists before execution.
 
 ### Agent Mode

@@ -2,7 +2,14 @@
 
 All notable changes to this extension will be documented in this file.
 
-## 1.1.0
+## 1.1.2
+
+- **Fixed `@ctx /run` agent mode timeout causing suggestion-only responses**: The first-attempt timeout for `/run` was 90 s, which is too short for complex multi-step edits. It has been raised to 300 s so agent operations have sufficient time to complete before the retry path triggers.
+- **Blocked the null-tool fallback in forced agent mode**: When a timeout occurred with explicit tools forwarded, the previous retry path called the model with provider-managed tools (`null`). This stripped the file-editing tools and caused the model to describe changes in text instead of applying them. In `/run` mode, a timeout now surfaces as an explicit error rather than silently degrading to Ask behaviour.
+- **Strengthened agent mode instruction**: The `getModeBehaviorInstruction` text for agent mode now explicitly tells the model to apply changes with tools and not describe them, reducing suggestion-mode responses even on the first attempt.
+- **Removed unnecessary `as any` cast**: The `forceAgent` path now assigns `modeResolution` with a properly typed literal instead of a cast.
+
+## 1.1.1
 
 - **Simplified participant command surface**: Removed the redundant `@ctx /ask` command path. `@ctx` now always injects buffered context and answers directly.
 - **Added explicit action command**: Introduced `@ctx /run` to force agentic execution with tools while still using buffered context.
