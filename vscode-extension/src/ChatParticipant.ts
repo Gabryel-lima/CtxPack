@@ -391,6 +391,7 @@ async function handleInjectionMode(
     getModeBehaviorInstruction(modeResolution.mode, effectiveMode),
     "Treat the CtxPack buffer as grounded workspace evidence. Read it first, answer from it directly when possible.",
     "Only invoke tools when the CtxPack buffer does not contain enough information. Do not search or read files already represented in the buffer.",
+    "IMPORTANT: Do NOT call the `skill`, `task_complete`, `memory`, or `vscode_askQuestions` tools. These are internal Copilot assistant tools and are not available in this context. Calling them will produce an error.",
     contextBlock,
   ].join("\n\n");
 
@@ -625,6 +626,16 @@ function getModeBehaviorInstruction(
 // Tool selection
 // ---------------------------------------------------------------------------
 
+// Tools that are internal to the Copilot assistant layer and must never be
+// forwarded to a participant-scoped model request. Forwarding them causes the
+// model to call e.g. skill("troubleshoot") which fails with "Skill not found".
+const BLOCKED_META_TOOLS = new Set([
+  "skill",
+  "task_complete",
+  "memory",
+  "vscode_askQuestions",
+]);
+
 function shouldForwardToolsForMode(mode: CtxChatMode): boolean {
   return mode === "agent" || mode === "ask";
 }
@@ -649,7 +660,8 @@ function selectToolsForModel(
   const limit = Math.min(modeLimit, getToolLimitFromModel(model));
   if (limit <= 0) { return []; }
 
-  return tools.length <= limit ? [...tools] : [...tools].slice(0, limit);
+  const eligible = [...tools].filter((t) => !BLOCKED_META_TOOLS.has(t.name));
+  return eligible.length <= limit ? eligible : eligible.slice(0, limit);
 }
 
 // ---------------------------------------------------------------------------

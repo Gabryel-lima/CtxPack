@@ -2,6 +2,10 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 1.1.3
+
+- **Fixed `skill` / internal-tool errors in agent mode**: When the model runs inside a participant request it still sees Copilot-internal tools (`skill`, `task_complete`, `memory`, `vscode_askQuestions`) in its context. Forwarding them — or letting the model call them — fails with errors like `Skill "troubleshoot" not found`. These tools are now filtered out from the forwarded tool list **and** the model prompt explicitly tells the model not to invoke them, preventing the error entirely.
+
 ## 1.1.2
 
 - **Fixed `@ctx /run` agent mode timeout causing suggestion-only responses**: The first-attempt timeout for `/run` was 90 s, which is too short for complex multi-step edits. It has been raised to 300 s so agent operations have sufficient time to complete before the retry path triggers.
