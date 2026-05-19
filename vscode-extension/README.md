@@ -98,6 +98,8 @@ CtxPack respects the current Copilot Chat mode and adapts tool availability acco
 - Tool forwarding is capped to a safe maximum to avoid provider-side tool-count rejections.
 - If a provider still rejects a request because of tool count, CtxPack retries automatically with a model-managed tool set.
 - In `/run` (forced agent) mode, a timeout surfaces as an explicit error rather than silently falling back to a suggestion-only response — preserving the guarantee that agent mode always applies edits with tools.
+- If the host layer injects a blocked meta-tool and the model attempts to call it, the participant intercepts the `ToolNotFound` error and retries once with a corrective prompt instead of aborting the run. A loop-prevention guard ensures at most one recovery attempt per call.
+- Context injection budget scales with the model's context window (30 %, capped at 40 000 tokens), so slots are no longer dropped as "budget exceeded" on large-context models.
 - Every extension command now ensures a workspace `.packignore` exists before execution.
 
 ### Agent Mode
@@ -309,6 +311,8 @@ The new extension commands are thin wrappers around this same CLI capability. Th
   Push a selection, push a file, or generate and push the semantic workspace pack before prompting.
 - You see `Cannot have more than ... tools per request`:
   CtxPack now retries automatically with model-managed tool selection. If this persists, reduce loaded integrations/tools and retry.
+- `/run` aborted with a blocked-tool message:
+  The participant automatically intercepts `skill` / `task_complete` / `memory` / `vscode_askQuestions` calls and retries once. If the retry also fails, the error is surfaced as `Model error: …` — reduce the scope of the task or rephrase the prompt to avoid triggering the blocked tool again.
 - Chat stays in `Evaluating` for too long:
   The participant now uses a defensive timeout and should return an explicit failure message instead of waiting indefinitely.
 

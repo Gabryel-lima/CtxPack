@@ -391,7 +391,7 @@ async function handleInjectionMode(
     getModeBehaviorInstruction(modeResolution.mode, effectiveMode),
     "Treat the CtxPack buffer as grounded workspace evidence. Read it first, answer from it directly when possible.",
     "Only invoke tools when the CtxPack buffer does not contain enough information. Do not search or read files already represented in the buffer.",
-    "IMPORTANT: Do NOT call the `skill`, `task_complete`, `memory`, or `vscode_askQuestions` tools. These are internal Copilot assistant tools and are not available in this context. Calling them will produce an error.",
+    "CRITICAL EXECUTION CONSTRAINT: The tools `skill`, `task_complete`, `memory`, and `vscode_askQuestions` do NOT exist in this execution scope. They are host-layer Copilot internals injected outside this participant context. Invoking any of them will throw ToolNotFound and immediately abort the entire agent run — undoing all progress. You must never call them under any circumstances, including when wrapping up work or selecting a strategy.",
     contextBlock,
   ].join("\n\n");
 
@@ -456,8 +456,13 @@ function buildInjectionBadge(
     ? usedTags.map((t) => `\`${t}\``).join(" · ")
     : "_no slots attached_";
 
+  // Format both token values as "~Xk" so the badge stays scannable even when
+  // the model has a large context window (e.g. 128k → budget = 38.4k).
+  const usedK   = (estimatedTokens / 1000).toFixed(1);
+  const budgetK = (tokenBudget     / 1000).toFixed(1);
+
   return (
-    `> **CtxPack** · ${usedTags.length} slot(s) · ~${estimatedTokens} / ${tokenBudget} tokens · ${modeLabel}${omittedSuffix}\n` +
+    `> **CtxPack** · ${usedTags.length} slot(s) · ~${usedK}k / ~${budgetK}k tokens · ${modeLabel}${omittedSuffix}\n` +
     `> ${tagLine}\n`
   );
 }
@@ -507,7 +512,10 @@ function getContextTokenBudget(modelMaxInputTokens: number | undefined): number 
   if (!modelMaxInputTokens || !Number.isFinite(modelMaxInputTokens)) {
     return 2500;
   }
-  return Math.max(700, Math.min(5000, Math.floor(modelMaxInputTokens * 0.3)));
+  // 30 % of the model context window, capped between 700 and 40 000 tokens.
+  // The old cap of 5 000 was too restrictive for large-context models (128 k+)
+  // and caused slots to be constantly omitted as "budget exceeded".
+  return Math.max(700, Math.min(40_000, Math.floor(modelMaxInputTokens * 0.3)));
 }
 
 function buildModeLabel(
@@ -682,12 +690,17 @@ async function sendWithToolFallback(
   //   null  → omit the tools key (model-managed, only used in the retry path)
   //   []    → pass tools: [] explicitly (blocks implicit provider-side tool injection)
   //   [...] → explicit curated list
-  const sendRequest = (explicitTools: readonly vscode.LanguageModelToolInformation[] | null) =>
+  // promptOverride is used by the blocked-tool recovery path to inject a
+  // corrective instruction before retrying without changing the original prompt.
+  const sendRequest = (
+    explicitTools: readonly vscode.LanguageModelToolInformation[] | null,
+    promptOverride?: string
+  ) =>
     chatUtils.sendChatParticipantRequest(
       request,
       chatContext,
       {
-        prompt,
+        prompt: promptOverride ?? prompt,
         responseStreamOptions: { stream, references: true, responseText: true },
         ...(explicitTools !== null ? { tools: explicitTools } : {}),
         extensionMode,
@@ -704,6 +717,11 @@ async function sendWithToolFallback(
   // causes the model to suggest rather than apply edits).
   const firstTimeout = isForceAgent ? 300_000 : (hasExplicitTools ? 90_000 : 180_000);
 
+  // Tracks whether the blocked-tool recovery path has already been used.
+  // Ensures at most ONE recovery retry per sendWithToolFallback call —
+  // prevents any accidental loop if future refactors modify the catch path.
+  let hasAttemptedRecovery = false;
+
   try {
     return await awaitWithTimeout(
       firstAttempt.result,
@@ -711,10 +729,38 @@ async function sendWithToolFallback(
       "CtxPack request timed out."
     );
   } catch (error) {
-    // In forced agent mode (/run), never fall back to provider-managed tools on timeout:
-    // doing so strips the file-editing tools and causes the model to suggest edits
-    // instead of applying them. Re-throw so the user gets an explicit error.
-    if (isForceAgent && isTimeoutError(error)) { throw error; }
+    if (isForceAgent) {
+      // If the model called a blocked meta-tool (skill, task_complete, etc.) and
+      // the host surfaced it as ToolNotFound, do NOT abort the agent run.
+      // Instead, inject a corrective instruction into the prompt and retry once
+      // with the same curated tool list so the model can continue the task.
+      // hasAttemptedRecovery ensures this path is taken at most once per call.
+      const blocked = isBlockedMetaToolError(error);
+      if (blocked.matched && !hasAttemptedRecovery) {
+        hasAttemptedRecovery = true;
+        const toolHint = blocked.toolName ? `\`${blocked.toolName}\`` : "a blocked host-layer tool";
+        stream.markdown(
+          `\n\n_CtxPack: intercepted call to ${toolHint} — tool does not exist in this scope. Retrying…_`
+        );
+        const correctedPrompt =
+          prompt +
+          `\n\nSYSTEM RECOVERY: Your previous tool invocation of ${toolHint} failed with ToolNotFound.` +
+          ` That tool does not exist in this participant execution scope and has been blocked.` +
+          ` Do NOT attempt to call it again. Do NOT call skill, task_complete, memory, or vscode_askQuestions.` +
+          ` Resume and complete the original task using only the workspace editing tools currently available to you.`;
+        const retryAttempt = sendRequest(tools, correctedPrompt);
+        // This await is NOT inside a new try/catch — if it throws again, it
+        // propagates directly to the caller (handleInjectionMode) with no further
+        // retry. The loop is structurally impossible.
+        return await awaitWithTimeout(
+          retryAttempt.result,
+          300_000,
+          "CtxPack agent retry timed out after blocked-tool intercept."
+        );
+      }
+      // Any other error in forceAgent (or second blocked-tool failure): surface directly.
+      throw error;
+    }
 
     const shouldRetry =
       hasExplicitTools && (isToolCountLimitError(error) || isTimeoutError(error));
@@ -812,6 +858,34 @@ function isTimeoutError(error: unknown): boolean {
 function isToolCountLimitError(error: unknown): boolean {
   const msg = error instanceof Error ? error.message : String(error);
   return /cannot have more than\s+\d+\s+tools per request/i.test(msg);
+}
+
+/**
+ * Detects ToolNotFound / tool-unavailable errors caused by the model invoking
+ * a blocked meta-tool (skill, task_complete, memory, vscode_askQuestions).
+ * Returns the matched tool name when identifiable.
+ */
+function isBlockedMetaToolError(
+  error: unknown
+): { matched: true; toolName: string | undefined } | { matched: false } {
+  const msg = error instanceof Error ? error.message : String(error);
+
+  // Check if any blocked tool name appears in the error message.
+  for (const toolName of BLOCKED_META_TOOLS) {
+    if (msg.toLowerCase().includes(toolName.toLowerCase())) {
+      return { matched: true, toolName };
+    }
+  }
+
+  // Generic ToolNotFound / tool-not-available patterns without a named tool.
+  if (
+    /ToolNotFound/i.test(msg) ||
+    /tool[^a-z]*(not found|not available|does not exist|unknown)/i.test(msg)
+  ) {
+    return { matched: true, toolName: undefined };
+  }
+
+  return { matched: false };
 }
 
 function describeModel(model: vscode.LanguageModelChat | undefined): string {

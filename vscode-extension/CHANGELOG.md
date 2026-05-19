@@ -2,6 +2,14 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 1.1.4
+
+- **Blocked-tool recovery retry in agent mode**: When the Copilot host layer injects a meta-tool (`skill`, `task_complete`, `memory`, `vscode_askQuestions`) and the model attempts to call it, the participant now intercepts the resulting `ToolNotFound` error, injects a corrective instruction into the prompt, and retries once with the same curated tool list — instead of aborting the entire agent run and losing all progress.
+- **Loop prevention guard**: A `hasAttemptedRecovery` flag ensures at most one recovery retry per agent call. If the retry also fails, the error surfaces to the user normally. Structurally impossible to loop.
+- **Strengthened blocked-tool prompt constraint**: The model instruction for agent mode is now a `CRITICAL EXECUTION CONSTRAINT` that explicitly names the `ToolNotFound` consequence and calls out the "wrapping up" and "selecting a strategy" scenarios where models were most likely to mistakenly invoke `skill`.
+- **Token budget cap raised (5 000 → 40 000 tokens)**: Context injection budget is now 30 % of the model's context window capped at 40 000 tokens. The previous cap of 5 000 caused constant "budget exceeded" slot omissions on large-context models (128 k+), where the budget should be ~38 400 tokens.
+- **Badge token display formatted as `~Xk / ~Yk`**: The injection badge now shows token counts in compact kilobyte form (e.g. `~1.8k / ~38.4k`) instead of raw integers, keeping it scannable regardless of context window size.
+
 ## 1.1.3
 
 - **Fixed `skill` / internal-tool errors in agent mode**: When the model runs inside a participant request it still sees Copilot-internal tools (`skill`, `task_complete`, `memory`, `vscode_askQuestions`) in its context. Forwarding them — or letting the model call them — fails with errors like `Skill "troubleshoot" not found`. These tools are now filtered out from the forwarded tool list **and** the model prompt explicitly tells the model not to invoke them, preventing the error entirely.
