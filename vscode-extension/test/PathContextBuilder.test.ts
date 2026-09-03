@@ -54,7 +54,10 @@ describe("PathContextBuilder", () => {
   it("skips binary files inside directories", () => {
     const dirPath = path.join(tempRoot, "assets");
     fs.mkdirSync(dirPath);
-    fs.writeFileSync(path.join(dirPath, "image.bin"), Buffer.from([0, 159, 146, 150]));
+    // ".dat" isn't in WorkspacePackBuilder's hardcoded binary-extension ignore
+    // list, so this exercises content-sniffing (isTextBuffer) rather than the
+    // ignore-matcher's extension shortcut.
+    fs.writeFileSync(path.join(dirPath, "payload.dat"), Buffer.from([0, 159, 146, 150]));
 
     const result = buildPathContext(dirPath, tempRoot, { maxFiles: 10, maxFileBytes: 10_000 });
 
@@ -71,5 +74,43 @@ describe("PathContextBuilder", () => {
     const result = buildPathContext(dirPath, tempRoot, { maxFiles: 2, maxFileBytes: 10_000 });
 
     expect(result.content).toContain("[CtxPack] Directory listing truncated by max file limit.");
+  });
+
+  it("excludes hardcoded ignore directories like node_modules and .git", () => {
+    const dirPath = path.join(tempRoot, "project");
+    fs.mkdirSync(dirPath);
+    fs.writeFileSync(path.join(dirPath, "index.ts"), "export const ok = true;\n", "utf8");
+
+    const nodeModules = path.join(dirPath, "node_modules", "some-pkg");
+    fs.mkdirSync(nodeModules, { recursive: true });
+    fs.writeFileSync(path.join(nodeModules, "index.js"), "module.exports = {};\n", "utf8");
+
+    const gitDir = path.join(dirPath, ".git");
+    fs.mkdirSync(gitDir, { recursive: true });
+    fs.writeFileSync(path.join(gitDir, "HEAD"), "ref: refs/heads/main\n", "utf8");
+
+    const result = buildPathContext(dirPath, tempRoot, { maxFiles: 50, maxFileBytes: 10_000 });
+
+    expect(result.content).toContain("## project/index.ts");
+    expect(result.content).not.toContain("node_modules/some-pkg/index.js");
+    expect(result.content).not.toContain(".git/HEAD");
+  });
+
+  it("respects .packignore patterns from the workspace root", () => {
+    fs.writeFileSync(path.join(tempRoot, ".packignore"), "secrets/\n", "utf8");
+
+    const dirPath = path.join(tempRoot, "project");
+    fs.mkdirSync(dirPath);
+    fs.writeFileSync(path.join(dirPath, "index.ts"), "export const ok = true;\n", "utf8");
+
+    const secretsDir = path.join(dirPath, "secrets");
+    fs.mkdirSync(secretsDir, { recursive: true });
+    fs.writeFileSync(path.join(secretsDir, "keys.txt"), "super-secret\n", "utf8");
+
+    const result = buildPathContext(dirPath, tempRoot, { maxFiles: 50, maxFileBytes: 10_000 });
+
+    expect(result.content).toContain("## project/index.ts");
+    expect(result.content).not.toContain("secrets/keys.txt");
+    expect(result.content).not.toContain("super-secret");
   });
 });

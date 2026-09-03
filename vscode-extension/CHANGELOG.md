@@ -2,6 +2,13 @@
 
 All notable changes to this extension will be documented in this file.
 
+## 1.2.0
+
+- **Added `CtxPack: Query workspace and push targeted context`**: Instead of always exporting the whole workspace, this command asks for a question, ranks every module by lexical match plus import-graph proximity (`createQueryPack` in `WorkspacePackBuilder.ts`), and pushes only the top matches as one pre-scoped slot tagged `<workspace>-query-<slug>`.
+- **Prompt correlation now influences what gets injected, not just a display table**: Previously `correlateSlotsWithPrompt` ran *after* slots were already trimmed to the token budget by recency, so it could only re-rank whatever pure recency had already kept — a highly relevant older slot could never be resurrected. Correlation is now computed against the full candidate slot set *before* trimming, and `ContextRingBuffer.buildPromptContextRanked` fills the budget in relevance order (falling back to recency for anything the prompt doesn't match).
+- **Fixed `PathContextBuilder` ignoring `.packignore` and hardcoded ignore directories**: Pushing a directory as a slot (`CtxPack: Push file or directory to buffer`, or the Explorer "Push this folder to buffer" shortcut) could previously drag in `node_modules/`, `.git/`, and other junk directories that the workspace-wide export already excluded. It now shares the same ignore matcher as the full workspace export.
+- Exported `createIgnoreMatcher` and `shouldIncludeFile` from `WorkspacePackBuilder.ts` so the above fix (and future builders) can reuse the same filtering logic instead of re-implementing it.
+
 ## 1.1.4
 
 - **Blocked-tool recovery retry in agent mode**: When the Copilot host layer injects a meta-tool (`skill`, `task_complete`, `memory`, `vscode_askQuestions`) and the model attempts to call it, the participant now intercepts the resulting `ToolNotFound` error, injects a corrective instruction into the prompt, and retries once with the same curated tool list — instead of aborting the entire agent run and losing all progress.

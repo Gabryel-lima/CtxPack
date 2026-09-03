@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import {
   createPackignoreTemplate,
+  createQueryPack,
   createReadablePack,
   createSemanticPack,
   getCtxChatModeDisplay,
@@ -105,5 +106,65 @@ describe("WorkspacePackBuilder", () => {
     expect(resolved.mode).toBe("auto");
     expect(resolved.source).toBe("fallback");
     expect(getCtxChatModeDisplay(resolved)).toContain("Auto");
+  });
+
+  describe("createQueryPack", () => {
+    beforeEach(() => {
+      fs.writeFileSync(path.join(tempRoot, "src", "unrelated.ts"), "export const nothing = 0;\n", "utf8");
+    });
+
+    it("ranks a module whose name/content matches the query above an unrelated one", () => {
+      const result = createQueryPack(tempRoot, "createUser service", {
+        maxFiles: 20,
+        maxFileBytes: 10_000,
+        top: 5,
+      });
+
+      expect(result.content).toContain("MOD:src/service|");
+      expect(result.content).not.toContain("MOD:src/unrelated|");
+    });
+
+    it("boosts a module related via a 1-hop REL edge even without its own lexical match", () => {
+      // "createUser" is only a declared symbol in service.ts — controller.ts
+      // only *calls* it, so it can't score lexically and must be pulled in
+      // purely by import-graph proximity to service.ts.
+      const result = createQueryPack(tempRoot, "createUser", {
+        maxFiles: 20,
+        maxFileBytes: 10_000,
+        top: 10,
+      });
+
+      expect(result.content).toContain("MOD:src/controller|");
+      expect(result.content).toMatch(/WHY:src\/controller\|graph:1-hop via src\/service/);
+      expect(result.content).not.toContain("MOD:src/unrelated|");
+    });
+
+    it("includes a WHY: line explaining each selected module's match", () => {
+      const result = createQueryPack(tempRoot, "UserService", { maxFiles: 20, maxFileBytes: 10_000 });
+
+      expect(result.content).toMatch(/WHY:src\/service\|(name-match|symbol-match)/);
+    });
+
+    it("only keeps REL edges between two modules that are both selected", () => {
+      const result = createQueryPack(tempRoot, "createUser", { maxFiles: 20, maxFileBytes: 10_000, top: 10 });
+
+      expect(result.content).toContain("REL:src/controller->src/service|via:./service");
+    });
+
+    it("limits output to the requested top-N modules", () => {
+      // "src" lexically matches every module's id/file, so this isolates the
+      // top-N cutoff itself rather than the ranking that feeds it.
+      const limited = createQueryPack(tempRoot, "src", { maxFiles: 20, maxFileBytes: 10_000, top: 1 });
+      const unlimited = createQueryPack(tempRoot, "src", { maxFiles: 20, maxFileBytes: 10_000, top: 10 });
+
+      expect(limited.fileCount).toBe(1);
+      expect(unlimited.fileCount).toBe(3);
+    });
+
+    it("does not write the query result to disk", () => {
+      createQueryPack(tempRoot, "createUser service", { maxFiles: 20, maxFileBytes: 10_000 });
+      const entries = fs.readdirSync(tempRoot);
+      expect(entries.some((entry) => entry.includes(".query."))).toBe(false);
+    });
   });
 });

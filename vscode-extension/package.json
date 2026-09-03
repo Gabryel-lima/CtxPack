@@ -2,7 +2,7 @@
   "name": "ctxpack",
   "displayName": "CtxPack",
   "description": "FIFO context buffer for Copilot Chat in VS Code",
-  "version": "1.1.4",
+  "version": "1.2.0",
   "publisher": "Gabryel-lima",
   "icon": "assets/ctxpack.png",
   "license": "MIT",
@@ -98,6 +98,10 @@
       {
         "command": "ctxpack.pushWorkspaceSemantic",
         "title": "CtxPack: Generate semantic pack and push to buffer"
+      },
+      {
+        "command": "ctxpack.queryWorkspace",
+        "title": "CtxPack: Query workspace and push targeted context"
       },
       {
         "command": "ctxpack.createPackignore",

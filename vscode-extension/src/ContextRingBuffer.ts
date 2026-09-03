@@ -92,6 +92,30 @@ export class ContextRingBuffer {
   }
 
   /**
+   * Builds a prompt-oriented payload from an explicit slot list, ordering
+   * inclusion by a relevance ranking (most-relevant tag first) instead of
+   * pure recency, within the same token budget. Slots whose tag isn't in
+   * rankedTags keep their original (recency) order and are only considered
+   * after every ranked slot — this is a pure reordering of the input to
+   * buildPromptContextFromSlots, not a new trimming algorithm.
+   */
+  public buildPromptContextRanked(
+    slots: ContextSlot[],
+    maxTokensBudget: number,
+    rankedTags: string[]
+  ): PromptContextPayload {
+    const rankIndex = new Map(rankedTags.map((tag, index) => [tag, index]));
+    const unranked = slots.filter((slot) => !rankIndex.has(slot.tag));
+    const ranked = slots
+      .filter((slot) => rankIndex.has(slot.tag))
+      // buildPromptContextFromSlots fills the budget by scanning the array
+      // from the end backward, so the most relevant slot must land last.
+      .sort((a, b) => rankIndex.get(b.tag)! - rankIndex.get(a.tag)!);
+
+    return this.buildPromptContextFromSlots([...unranked, ...ranked], maxTokensBudget);
+  }
+
+  /**
    * Returns active tags merged across ask, plan, and agent.
    */
   public listActiveTagsAnyMode(): string[] {

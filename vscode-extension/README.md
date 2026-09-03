@@ -31,6 +31,8 @@ The extension and the Python script are complementary:
 - Display real-time status bar feedback with emoji indicators (✅ BUFFER INJECTED, ⏳ READING BUFFER, 🔗 CORRELATING SLOTS, ❌ BUFFER ERROR, 📦 BUFFER READY).
 - Show explicit buffer-access confirmation in UI: chat report includes `Buffer access: confirmed` and status bar shows `buffer in use (N slot(s))` after successful injection.
 - Generate a semantic project pack from the extension and push it straight into the buffer.
+- Query the workspace for a targeted slice of context — rank modules by relevance to a question and push only the top matches, pre-scoped, instead of the whole workspace (`CtxPack: Query workspace and push targeted context`).
+- Rank buffered slots by relevance to the current prompt and prioritize the most relevant ones for injection when the token budget is tight, instead of always favoring the most recently pushed slot.
 - Generate `.sem.ctx.md`, `.ctx.md`, and `.packignore` directly from the extension.
 - Accept context pushes from the CtxPack CLI through IPC.
 - Evict old entries automatically with FIFO token-based limits.
@@ -125,13 +127,24 @@ The active-slot selection (chosen via `CtxPack: Choose active slots for dynamic 
 ## Recommended Decision Flow
 
 1. Ask yourself whether the prompt needs repository-specific context.
-2. If yes, decide whether you need a small local slice or a project-wide digest.
+2. If yes, decide whether you need a small local slice, a project-wide digest, or context for one specific question.
 3. For a small local slice, push a selection or file.
-4. For a project-wide digest, run `Generate semantic pack and push to buffer`.
+4. For a project-wide digest, run `Generate semantic pack and push to buffer`. For a specific question, run `Query workspace and push targeted context` instead — it ranks and pushes only what's relevant to that question.
 5. If needed, run `Choose active slots for dynamic context` so only the desired slots remain visible to the model across iterations.
 6. Confirm scope before asking.
 7. Use `Show current dynamic context scope` when you want to confirm what the next turn will inject.
 8. Clear or prune the buffer when the topic changes.
+
+### Querying The Workspace
+
+Instead of always dumping the whole workspace, `CtxPack: Query workspace and push targeted context` lets you ask a question and pushes only the modules that actually rank as relevant:
+
+1. Open the Command Palette and run `CtxPack: Query workspace and push targeted context`.
+2. Type a question, e.g. *"how does authentication work?"*.
+3. CtxPack ranks every workspace module by lexical match against your question plus proximity in the import graph, and pushes only the top matches as one slot tagged `<workspace>-query-<slug>`.
+4. You're immediately asked whether to activate that slot — say yes to scope the next chat turns to just this targeted context.
+
+This uses the same conceptual ranking as the CLI's `--query` flag (see the [main README](../README.md#query-command)), implemented independently for the extension — no Python required.
 
 ## Commands
 
@@ -171,6 +184,8 @@ If you prefer a guided entry point, run `CtxPack: Open context workflow wizard` 
   Generates `<workspace>.ctx.md` inside the extension and opens it.
 - `CtxPack: Generate semantic pack and push to buffer`
   Generates a semantic pack inside the extension and feeds it directly into the session buffer for immediate context use.
+- `CtxPack: Query workspace and push targeted context`
+  Prompts for a question, ranks workspace modules by relevance (lexical match plus import-graph proximity) instead of dumping everything, and pushes only the top matches as one pre-scoped slot.
 - `CtxPack: Create .packignore template`
   Creates a `.packignore` template inside the extension and opens it.
 - `CtxPack: Open context workflow wizard`
@@ -233,6 +248,12 @@ You can also move up one level to project context:
 
 ```text
 CtxPack: Generate semantic pack and push to buffer -> Copilot Chat (CtxPack participant) -> summarize the architecture
+```
+
+Or ask a targeted question instead of exporting the whole project:
+
+```text
+CtxPack: Query workspace and push targeted context -> "how does authentication work?" -> Copilot Chat (CtxPack participant) -> ask about auth
 ```
 
 You can also lock dynamic context to one file, one directory, or a chosen group of slots:

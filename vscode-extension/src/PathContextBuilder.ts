@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createIgnoreMatcher, IgnoreMatcher } from "./WorkspacePackBuilder";
 
 export interface PathContextResult {
   tag: string;
@@ -25,7 +26,13 @@ function relativeLabel(targetPath: string, workspaceRoot: string): string {
   return rel && !rel.startsWith("..") ? rel : path.basename(targetPath);
 }
 
-function walkDir(dirPath: string, collected: string[], limits: BuilderLimits): void {
+function walkDir(
+  dirPath: string,
+  collected: string[],
+  limits: BuilderLimits,
+  workspaceRoot: string,
+  matcher: IgnoreMatcher
+): void {
   if (collected.length >= limits.maxFiles) {
     return;
   }
@@ -37,8 +44,13 @@ function walkDir(dirPath: string, collected: string[], limits: BuilderLimits): v
     }
 
     const fullPath = path.join(dirPath, entry.name);
+    const relativePath = path.relative(workspaceRoot, fullPath).split(path.sep).join("/");
+    if (matcher.matches(relativePath, entry.name, entry.isDirectory())) {
+      continue;
+    }
+
     if (entry.isDirectory()) {
-      walkDir(fullPath, collected, limits);
+      walkDir(fullPath, collected, limits, workspaceRoot, matcher);
       continue;
     }
 
@@ -76,8 +88,9 @@ export function buildPathContext(targetPath: string, workspaceRoot: string, limi
     };
   }
 
+  const matcher = createIgnoreMatcher(workspaceRoot);
   const files: string[] = [];
-  walkDir(targetPath, files, limits);
+  walkDir(targetPath, files, limits, workspaceRoot, matcher);
   const sections = files
     .map((filePath) => buildFileSection(filePath, workspaceRoot, limits))
     .filter((section): section is string => Boolean(section));
