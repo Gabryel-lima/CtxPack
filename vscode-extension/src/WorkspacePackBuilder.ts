@@ -16,6 +16,21 @@ export interface WorkspacePackOptions {
   nowText?: string;
 }
 
+export interface WorkspaceQueryOptions extends WorkspacePackOptions {
+  fileHint?: string;
+  symbolHint?: string;
+  top?: number;
+  minScore?: number;
+  maxHops?: number;
+  hopDecay?: number;
+}
+
+export interface ModuleQueryScore {
+  module: ModuleInfo;
+  score: number;
+  reasons: string[];
+}
+
 export interface WorkspacePackResult {
   outputPath: string;
   content: string;
@@ -23,7 +38,7 @@ export interface WorkspacePackResult {
   truncated: boolean;
 }
 
-interface IgnoreMatcher {
+export interface IgnoreMatcher {
   matches(relativePath: string, entryName: string, isDirectory: boolean): boolean;
 }
 
@@ -33,7 +48,7 @@ interface WorkspaceFile {
   skippedReason?: string;
 }
 
-interface ModuleInfo {
+export interface ModuleInfo {
   id: string;
   file: string;
   role: string;
@@ -534,6 +549,254 @@ export function createSemanticPack(workspaceRoot: string, options: WorkspacePack
   };
 }
 
+/**
+ * Ranks the workspace's modules by relevance to a query instead of always
+ * dumping everything, and emits a trimmed semantic DSL subset for only the
+ * top matches — same DSL shape as createSemanticPack plus a WHY: line per
+ * module. Deliberately does NOT write to disk (unlike the other builders):
+ * a query result is meant to be pushed straight into the buffer as a small,
+ * ephemeral, pre-scoped slot, not kept as a project artifact.
+ *
+ * Ranking mirrors analyzers/relevance_ranker.py on the Python side
+ * conceptually (lexical overlap + import-graph proximity, no ML) — the two
+ * are implemented independently and may drift; keep that in mind if you
+ * change one without the other.
+ */
+export function createQueryPack(
+  workspaceRoot: string,
+  query: string,
+  options: WorkspaceQueryOptions = {}
+): WorkspacePackResult {
+  const collected = collectWorkspaceFiles(workspaceRoot, options);
+  const modules = collected.files.map((file) => describeModule(file));
+  const scored = rankModules(modules, query, options);
+
+  const projectName = path.basename(workspaceRoot);
+  const languages = new Set(scored.map(({ module }) => guessLanguageFromPath(module.file)).filter(Boolean));
+  const selectedIds = new Set(scored.map(({ module }) => module.id));
+
+  const lines: string[] = [
+    "<!-- DSL SEMANTIC (QUERY SUBSET): PRJ=project, DEP=dependencies, MOD=module, REL=module relations, CONV=conventions, DEC=design decisions, BUG=known issues, NOW=current focus, CTX=extra context, WHY=why this module was selected for the query -->",
+    "",
+    `PRJ:${projectName}|lang:${[...languages].join(",") || "Unknown"}`,
+  ];
+
+  for (const { module, reasons } of scored) {
+    lines.push(`MOD:${module.id}|file:${module.file}|role:${module.role}|state:${module.state}`);
+    for (const className of module.classes) {
+      lines.push(`  CLASS:${className}`);
+    }
+    for (const functionName of module.functions) {
+      lines.push(`  FUNC:${functionName}`);
+    }
+    lines.push(`WHY:${module.id}|${reasons.join(",") || "seed match"}`);
+  }
+
+  for (const { module } of scored) {
+    for (const relation of module.relations) {
+      if (selectedIds.has(relation.target)) {
+        lines.push(`REL:${module.id}->${relation.target}|via:${relation.via}`);
+      }
+    }
+  }
+
+  for (const { module } of scored) {
+    lines.push(`CTX:${module.file}: ${module.ctx}`);
+  }
+
+  const body = lines.join("\n");
+  const estimatedTokens = Math.ceil(body.length / 4);
+  const sizeKb = Math.max(1, Math.round(body.length / 1024));
+  const content =
+    `${body}\n\n---\n## QUERY PACK SUMMARY\n- Query: ${sanitizeInline(query)}\n` +
+    `- Modules matched: ${scored.length}\n- Estimated tokens: ~${estimatedTokens}\n- Output size: ~${sizeKb} KB\n`;
+
+  const slug = query.trim().toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 40) || "query";
+  const outputPath = path.join(workspaceRoot, `${projectName}.${slug}.query.sem.ctx.md`);
+
+  return {
+    outputPath,
+    content,
+    fileCount: scored.length,
+    truncated: collected.truncated,
+  };
+}
+
+const RELEVANCE_TOKEN_RE = /[a-z0-9_]+/gu;
+const NAME_WEIGHT = 1.0;
+const SYMBOL_WEIGHT = 0.8;
+const TAG_WEIGHT = 0.6;
+const ROLE_WEIGHT = 0.4;
+const HINT_SCORE = 1.0;
+
+function tokenizeForRelevance(text: string): Set<string> {
+  const matches = text.toLowerCase().match(RELEVANCE_TOKEN_RE) ?? [];
+  return new Set(matches.filter((token) => token.length >= 2));
+}
+
+function lexicalModuleScore(module: ModuleInfo, queryTerms: Set<string>): { score: number; reasons: string[] } {
+  if (queryTerms.size === 0) {
+    return { score: 0, reasons: [] };
+  }
+
+  let best = 0;
+  const reasons: string[] = [];
+
+  const consider = (text: string, weight: number, label: string): void => {
+    const terms = tokenizeForRelevance(text);
+    const matched = [...queryTerms].filter((term) => terms.has(term));
+    if (matched.length === 0) {
+      return;
+    }
+    const score = weight * (matched.length / queryTerms.size);
+    if (score > best) {
+      best = score;
+    }
+    reasons.push(`${label}(${matched.join(",")})`);
+  };
+
+  consider(`${module.id} ${module.file}`, NAME_WEIGHT, "name-match");
+  consider([...module.classes, ...module.functions].join(" "), SYMBOL_WEIGHT, "symbol-match");
+  consider(module.role, ROLE_WEIGHT, "role-match");
+  consider(module.ctx, TAG_WEIGHT, "tag-match");
+
+  return { score: best, reasons };
+}
+
+function buildModuleAdjacency(modules: ModuleInfo[]): Map<string, Set<string>> {
+  const adjacency = new Map<string, Set<string>>();
+  const link = (a: string, b: string): void => {
+    if (!adjacency.has(a)) {
+      adjacency.set(a, new Set());
+    }
+    adjacency.get(a)!.add(b);
+  };
+  for (const module of modules) {
+    for (const relation of module.relations) {
+      link(module.id, relation.target);
+      link(relation.target, module.id);
+    }
+  }
+  return adjacency;
+}
+
+function propagateModuleGraphScores(
+  seedScores: Map<string, number>,
+  adjacency: Map<string, Set<string>>,
+  maxHops: number,
+  hopDecay: number
+): { scores: Map<string, number>; reasons: Map<string, string> } {
+  const scores = new Map<string, number>();
+  const reasons = new Map<string, string>();
+  const visited = new Set(seedScores.keys());
+  let frontier = [...seedScores.entries()];
+  let hop = 0;
+
+  while (frontier.length > 0 && hop < maxHops) {
+    hop += 1;
+    const nextFrontier: Array<[string, number]> = [];
+    for (const [name, score] of frontier) {
+      const decayed = score * hopDecay;
+      if (decayed <= 0) {
+        continue;
+      }
+      for (const neighbor of adjacency.get(name) ?? []) {
+        if (visited.has(neighbor)) {
+          continue;
+        }
+        scores.set(neighbor, decayed);
+        reasons.set(neighbor, `graph:${hop}-hop via ${name}`);
+        nextFrontier.push([neighbor, decayed]);
+      }
+    }
+    for (const [name] of nextFrontier) {
+      visited.add(name);
+    }
+    frontier = nextFrontier;
+  }
+
+  return { scores, reasons };
+}
+
+function rankModules(
+  modules: ModuleInfo[],
+  query: string,
+  options: WorkspaceQueryOptions
+): ModuleQueryScore[] {
+  const queryTerms = tokenizeForRelevance(query ?? "");
+  const maxHops = options.maxHops ?? 2;
+  const hopDecay = options.hopDecay ?? 0.5;
+  const top = options.top ?? 15;
+  const minScore = options.minScore ?? 0.05;
+
+  const lexicalScores = new Map<string, number>();
+  const lexicalReasons = new Map<string, string[]>();
+
+  for (const module of modules) {
+    const { score, reasons } = lexicalModuleScore(module, queryTerms);
+    if (score > 0) {
+      lexicalScores.set(module.id, score);
+      lexicalReasons.set(module.id, reasons);
+    }
+  }
+
+  if (options.fileHint?.trim()) {
+    const needle = options.fileHint.trim().toLowerCase();
+    for (const module of modules) {
+      if (module.file.toLowerCase().includes(needle) || module.id.toLowerCase().includes(needle)) {
+        lexicalScores.set(module.id, Math.max(lexicalScores.get(module.id) ?? 0, HINT_SCORE));
+        lexicalReasons.set(module.id, [...(lexicalReasons.get(module.id) ?? []), `file-hint(${options.fileHint})`]);
+      }
+    }
+  }
+
+  if (options.symbolHint?.trim()) {
+    const needle = options.symbolHint.trim().toLowerCase();
+    for (const module of modules) {
+      const symbolMatch = [...module.classes, ...module.functions].find((symbol) => symbol.toLowerCase().includes(needle));
+      if (symbolMatch) {
+        lexicalScores.set(module.id, Math.max(lexicalScores.get(module.id) ?? 0, HINT_SCORE));
+        lexicalReasons.set(module.id, [
+          ...(lexicalReasons.get(module.id) ?? []),
+          `symbol-hint(${options.symbolHint}:${symbolMatch})`,
+        ]);
+      }
+    }
+  }
+
+  const adjacency = buildModuleAdjacency(modules);
+  const { scores: graphScores, reasons: graphReasons } = propagateModuleGraphScores(
+    lexicalScores,
+    adjacency,
+    maxHops,
+    hopDecay
+  );
+
+  const moduleById = new Map(modules.map((module) => [module.id, module]));
+  const allIds = new Set([...lexicalScores.keys(), ...graphScores.keys()]);
+  const results: ModuleQueryScore[] = [];
+
+  for (const id of allIds) {
+    const module = moduleById.get(id);
+    if (!module) {
+      continue;
+    }
+    const score = Math.max(lexicalScores.get(id) ?? 0, graphScores.get(id) ?? 0);
+    if (score < minScore) {
+      continue;
+    }
+    const reasons = [...(lexicalReasons.get(id) ?? [])];
+    const graphReason = graphReasons.get(id);
+    if (graphReason) {
+      reasons.push(graphReason);
+    }
+    results.push({ module, score: Math.round(score * 10000) / 10000, reasons });
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  return results.slice(0, top);
+}
+
 function buildReadableSection(file: WorkspaceFile): string {
   if (file.skippedReason) {
     return `## ${file.relativePath}\n[Skipped: ${file.skippedReason}]`;
@@ -599,7 +862,7 @@ function collectWorkspaceFiles(workspaceRoot: string, options: WorkspacePackOpti
   return { files, truncated };
 }
 
-function createIgnoreMatcher(workspaceRoot: string): IgnoreMatcher {
+export function createIgnoreMatcher(workspaceRoot: string): IgnoreMatcher {
   const regexes = readPackignorePatterns(workspaceRoot).map(patternToRegExp);
 
   return {
@@ -643,7 +906,7 @@ function patternToRegExp(pattern: string): RegExp {
   return new RegExp(`(^|/)${normalized}$`, "u");
 }
 
-function shouldIncludeFile(relativePath: string): boolean {
+export function shouldIncludeFile(relativePath: string): boolean {
   const basename = path.basename(relativePath);
   if (basename === "Makefile") {
     return true;

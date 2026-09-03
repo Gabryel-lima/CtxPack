@@ -6,10 +6,11 @@
 
 ## Features
 
-- **Multiple Formats**: Creates different profiles (Semantic DSL by default `.sem.ctx.md`, Human Readable `.ctx.md` with `--readable`, and Token/Chunk files `.tokens.ctx.md`).
+- **Targeted Query**: Ask for context about one file, symbol, or free-text question instead of the whole repo — `--query` ranks modules by lexical match + import-graph proximity and emits a trimmed `.sem.ctx.md` subset with a `WHY:` reason per module. See [Query Command](#query-command) below.
+- **Multiple Output Profiles**: Generated on demand, not all at once — Semantic DSL (`.sem.ctx.md`, written by default unless `--no-semantic`), Human Readable (`.ctx.md`, opt-in via `--readable`), and a lexical Token/Chunk index (`.tokens.ctx.md`, opt-in via `--chunk`/`--embed`).
 - **Semantic DSL Mode**: Structural semantic extraction with pure-Python analyzers, import/relation indexing, and smart inference for state, role, conventions, and missing metadata context.
 - **Directory Tree**: Includes an ASCII directory tree for easy navigation.
-- **Smart Filtering & Exclusion**: Automatic root detection and configurable category exclusions (build, vendor, test, doc, etc). Whitelist extensions and exclude specific directories/files.
+- **Smart Filtering & Exclusion**: Automatic root detection and configurable category exclusions (build, vendor, test, doc, etc, tunable via `--exclude-category`/`--include-category`). Whitelist extensions and exclude specific directories/files.
 - **Comment Stripping**: Option to remove single-line comments to save tokens.
 - **File Size Limits**: Skip files that are too large.
 - **Token Estimation**: Provides a rough estimate of the token count.
@@ -26,7 +27,13 @@ usage: ctxpack.py [-h] [-o OUTPUT] [-e EXT [EXT ...]] [-x NAME [NAME ...]]
                   [--embed] [--embed-dim EMBED_DIM] [--readable]
                   [--readable-output READABLE_OUTPUT] [--update]
                   [--remote-url REMOTE_URL] [--semantic] [--no-semantic]
-                  [--semantic-only] [--now TEXT] [--no-output FILE]
+                  [--semantic-only] [--now TEXT] [--no-output FILE] [--push]
+                  [--push-tag TAG] [--push-workspace PATH]
+                  [--exclude-category NAME [NAME ...]]
+                  [--include-category NAME [NAME ...]] [--query TEXT]
+                  [--file PATH] [--symbol NAME] [--query-top QUERY_TOP]
+                  [--query-min-score QUERY_MIN_SCORE]
+                  [--query-hops QUERY_HOPS] [--query-output FILE]
                   [project_dir]
 
 ctxpack — Collapse a project into a single LLM-ready context file.
@@ -62,8 +69,9 @@ options:
   --chunk-overlap CHUNK_OVERLAP
                         Overlap lines between consecutive chunks (default:
                         20).
-  --embed               Compute deterministic embeddings for each chunk (pure
-                        Python).
+  --embed               Compute a deterministic hashed token fingerprint per
+                        chunk (pure Python, not a real semantic embedding
+                        model).
   --embed-dim EMBED_DIM
                         Embedding vector dimension when --embed is enabled
                         (default: 64).
@@ -78,6 +86,19 @@ options:
   --remote-url REMOTE_URL
                         Optional: override remote repository URL used by
                         --update.
+  --push                Send generated output to the VS Code ContextRingBuffer
+                        via IPC. Requires extension running in VS Code.
+  --push-tag TAG        Tag for the target buffer slot (default: project
+                        directory name).
+  --push-workspace PATH
+                        VS Code workspace root used to compute IPC socket
+                        path. Default: resolved project_dir.
+  --exclude-category NAME [NAME ...]
+                        Exclude these path categories (default: vendor, build,
+                        vcs, env).
+  --include-category NAME [NAME ...]
+                        Force-include these path categories, overriding
+                        --exclude-category (default: test, docs).
 
 semantic DSL output:
   --semantic            Generate .sem.ctx.md with semantic DSL output
@@ -90,6 +111,68 @@ semantic DSL output:
                         project)
   --no-output FILE      Path for the semantic output file (default:
                         <project_name>.sem.ctx.md)
+
+targeted query:
+  --query TEXT          Ask for context relevant to TEXT instead of dumping
+                        the whole repo. Writes a trimmed semantic DSL subset
+                        ranked by lexical + import-graph relevance.
+  --file PATH           Optional file-path hint for --query (boosts modules
+                        matching this path).
+  --symbol NAME         Optional symbol-name hint for --query (boosts modules
+                        defining this symbol).
+  --query-top QUERY_TOP
+                        Max number of modules to include in the query result
+                        (default: 15).
+  --query-min-score QUERY_MIN_SCORE
+                        Minimum relevance score for a module to be included
+                        (default: 0.05).
+  --query-hops QUERY_HOPS
+                        Max import-graph hops to propagate relevance across
+                        (default: 2).
+  --query-output FILE   Path for the query result file (default:
+                        <project_name>.query.sem.ctx.md).
+```
+
+### Query Command
+
+Instead of always dumping the whole repository, `--query` ranks modules by a
+lightweight, dependency-free heuristic — lexical/substring overlap against
+module names, paths, symbols, and tags, boosted by proximity in the import
+graph — and writes only the top matches to `<project_name>.query.sem.ctx.md`.
+Each selected module gets a `WHY:` line explaining which signal matched it
+(name/symbol/role/tag match, or graph hop distance).
+
+```bash
+# Free-text question
+python ctxpack.py . --query "how does authentication work" --query-top 10
+
+# Narrow the ranking with a file hint
+python ctxpack.py . --query "auth flow" --file src/auth/login.py --query-top 5
+
+# Narrow with a symbol hint, and push the result to the VS Code buffer
+python ctxpack.py . --query "session handling" --symbol login --push
+```
+
+`--file`/`--symbol` are hints that boost matching modules — they only take
+effect together with `--query`; used alone (without `--query`) they are
+ignored and CtxPack falls back to its normal full-pack behavior.
+
+Query results are never written to `.sem.ctx.md` — they always go to a
+separate `*.query.sem.ctx.md` file (or the path given via `--query-output`),
+so a targeted query never overwrites a full project pack.
+
+### Excluding or forcing categories
+
+`--exclude-category` / `--include-category` tune the same category filter
+used internally for tree building (`vendor`, `build`, `vcs`, `test`, `docs`,
+`env` — see `filters/exclusion.py`). By default `vendor`, `build`, `vcs`, and
+`env` are excluded, while `test` and `docs` are force-included; pass either
+flag to override that default. `--include-category` always wins over
+`--exclude-category` for a category named in both.
+
+```bash
+# Exclude test files as well as the defaults
+python ctxpack.py . --exclude-category test --query "parser" --query-top 10
 ```
 
 ## Examples
@@ -188,9 +271,9 @@ Rule of thumb: if injected context improves precision, keep it enabled; if it ad
 
 ### Recommended usage flow
 
-1. Decide whether you need a local snippet or a project-wide digest.
+1. Decide whether you need a local snippet, a project-wide digest, or context for a specific question.
 2. For local work, push a selection or the full file.
-3. For workspace-level context, run `CtxPack: Generate semantic pack and push to buffer`.
+3. For workspace-level context, run `CtxPack: Generate semantic pack and push to buffer`. For a specific question or task, run `CtxPack: Query workspace and push targeted context` instead — it pushes only the ranked, relevant modules rather than the whole workspace.
 4. If needed, run `CtxPack: Choose active slots for dynamic context` so the same file, directory, or slot group is reused in every iteration.
 5. Inspect or remove stale slots if needed.
 6. Ask in Copilot Chat with the CtxPack participant after the buffer and active scope match your current task.
@@ -223,6 +306,7 @@ If you want a guided flow, run `CtxPack: Open context workflow wizard` from the 
 - `ctxpack.exportSemantic`: generate `<workspace>.sem.ctx.md` inside the extension.
 - `ctxpack.exportReadable`: generate `<workspace>.ctx.md` inside the extension.
 - `ctxpack.pushWorkspaceSemantic`: generate a semantic project pack and send it to the extension buffer through IPC.
+- `ctxpack.queryWorkspace`: ask a question and push only the ranked, relevant modules as a pre-scoped slot — instead of the whole workspace.
 - `ctxpack.createPackignore`: generate a `.packignore` template inside the extension.
 - `ctxpack.wizard`: open one quick menu for push, scope selection, export, and cleanup actions.
 
@@ -324,6 +408,8 @@ python ctxpack.py --update --remote-url git@github.com:your/repo.git
 The script walks through the project directory, filters files based on your criteria, and concatenates them into a single Markdown file. Each file's content is enclosed in a fenced code block, making it easy for language models to parse.
 
 For semantic output, CtxPack combines multiple analyzers: language detection, dependency extraction, module mapping, relation inference, symbol extraction, and metadata/context enrichment. When explicit metadata tags are missing, it derives context from leading comments, symbol structure, file names, and surrounding heuristics so the final DSL stays informative without requiring manual annotation.
+
+`--query` runs on top of that same analyzed context: it's a lexical/substring + import-graph-proximity heuristic (`analyzers/relevance_ranker.py`), not a machine-learning or embedding-based ranker. It's explainable (each match records *why* it was selected) and dependency-free, but it won't catch synonyms or purely semantic relationships that share no vocabulary with the query.
 
 ## Built-in Semantic Extraction
 

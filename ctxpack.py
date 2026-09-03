@@ -516,6 +516,7 @@ def build_pack(
     chunk_overlap: int = 20,
     do_embed: bool = False,
     embed_dim: int = 64,
+    exclusion_filter=None,
 ) -> None:
     """Build two outputs:
     - tokens_output_path: compact, tokens/index-only file (default)
@@ -531,7 +532,8 @@ def build_pack(
     print(_color_text(f"[ctxpack] Embeddings:   {do_embed} (dim={embed_dim})", "cyan"))
 
     tree_str, files = build_tree(
-        project_dir, ignore_patterns, allowed_extensions, extra_ignore, max_lines
+        project_dir, ignore_patterns, allowed_extensions, extra_ignore, max_lines,
+        exclusion_filter=exclusion_filter,
     )
 
     # Prepare two representations
@@ -741,7 +743,8 @@ def main():
     parser.add_argument(
         "--embed",
         action="store_true",
-        help="Compute deterministic embeddings for each chunk (pure Python).",
+        help="Compute a deterministic hashed token fingerprint per chunk (pure Python, "
+             "not a real semantic embedding model).",
     )
     parser.add_argument(
         "--embed-dim",
@@ -830,6 +833,70 @@ def main():
             "VS Code workspace root used to compute IPC socket path. "
             "Default: resolved project_dir."
         ),
+    )
+    from filters.exclusion import EXCLUSION_CATEGORIES
+    parser.add_argument(
+        "--exclude-category",
+        nargs="+",
+        default=None,
+        metavar="NAME",
+        choices=sorted(EXCLUSION_CATEGORIES.keys()),
+        help="Exclude these path categories (default: vendor, build, vcs, env).",
+    )
+    parser.add_argument(
+        "--include-category",
+        nargs="+",
+        default=None,
+        metavar="NAME",
+        choices=sorted(EXCLUSION_CATEGORIES.keys()),
+        help="Force-include these path categories, overriding --exclude-category (default: test, docs).",
+    )
+
+    query_group = parser.add_argument_group("targeted query")
+    query_group.add_argument(
+        "--query",
+        metavar="TEXT",
+        default=None,
+        help="Ask for context relevant to TEXT instead of dumping the whole repo. "
+             "Writes a trimmed semantic DSL subset ranked by lexical + import-graph relevance.",
+    )
+    query_group.add_argument(
+        "--file",
+        dest="query_file",
+        metavar="PATH",
+        default=None,
+        help="Optional file-path hint for --query (boosts modules matching this path).",
+    )
+    query_group.add_argument(
+        "--symbol",
+        dest="query_symbol",
+        metavar="NAME",
+        default=None,
+        help="Optional symbol-name hint for --query (boosts modules defining this symbol).",
+    )
+    query_group.add_argument(
+        "--query-top",
+        type=int,
+        default=15,
+        help="Max number of modules to include in the query result (default: 15).",
+    )
+    query_group.add_argument(
+        "--query-min-score",
+        type=float,
+        default=0.05,
+        help="Minimum relevance score for a module to be included (default: 0.05).",
+    )
+    query_group.add_argument(
+        "--query-hops",
+        type=int,
+        default=2,
+        help="Max import-graph hops to propagate relevance across (default: 2).",
+    )
+    query_group.add_argument(
+        "--query-output",
+        default=None,
+        metavar="FILE",
+        help="Path for the query result file (default: <project_name>.query.sem.ctx.md).",
     )
 
     args = parser.parse_args()
@@ -987,15 +1054,33 @@ def main():
         rel_ctxpack = ctxpack_dir.relative_to(project_dir)
         extra_ignore.add(str(rel_ctxpack.parts[0]))
 
+    from filters.exclusion import ExclusionFilter
+    # ExclusionFilter's own defaults force-include "test"/"docs" (they cancel
+    # out any overlapping exclusion). If the user explicitly excludes one of
+    # those categories without also naming --include-category, that default
+    # would silently undo their request — so only fall back to the built-in
+    # DEFAULT_INCLUDE when the user touched neither flag.
+    if args.include_category:
+        included_categories = set(args.include_category)
+    elif args.exclude_category:
+        included_categories = set()
+    else:
+        included_categories = None
+    exclusion_filter = ExclusionFilter(
+        excluded_categories=set(args.exclude_category) if args.exclude_category else None,
+        included_categories=included_categories,
+    )
+
     ignore_patterns = load_packignore(project_dir)
     _, included_files = build_tree(
-        project_dir, ignore_patterns, allowed_ext, extra_ignore, args.max_lines
+        project_dir, ignore_patterns, allowed_ext, extra_ignore, args.max_lines,
+        exclusion_filter=exclusion_filter,
     )
     args.included_files = included_files
 
     no_content = ""
 
-    if args.semantic or args.semantic_only:
+    if args.semantic or args.semantic_only or args.query:
         from dsl_schema import DSLContext
         from dsl_builder import build_dsl
         from analyzers.lang_detector import LangDetector
@@ -1014,27 +1099,86 @@ def main():
                  RelationFinder, SymbolExtractor, TagParser]:
             Analyzer(project_dir, args).populate(ctx)
 
-        if args.no_output:
-            no_path = Path(_normalize_path_arg(args.no_output))
-        else:
-            no_path = project_dir / f"{ctx.project.name}.sem.ctx.md"
-        
-        no_content = build_dsl(ctx)
-        
-        # Append semantic tokens and file size
-        no_tokens = estimate_tokens(no_content)
-        no_size_kb = len(no_content.encode("utf-8")) // 1024
-        
-        footer = (
-            f"\n\n---\n"
-            f"## SEMANTIC PACK SUMMARY\n"
-            f"- Estimated tokens: ~{no_tokens:,}\n"
-            f"- Output size: ~{no_size_kb} KB\n"
-        )
-        no_content += footer
+        # --query is a standalone targeted mode: it never also writes the full
+        # .sem.ctx.md pack, since the whole point is to avoid the full dump.
+        if not args.query:
+            if args.no_output:
+                no_path = Path(_normalize_path_arg(args.no_output))
+            else:
+                no_path = project_dir / f"{ctx.project.name}.sem.ctx.md"
 
-        Path(no_path).write_text(no_content, encoding="utf-8")
-        print(_color_text(f"[ctxpack] Semantic DSL written to: {no_path}", "green"))
+            no_content = build_dsl(ctx)
+
+            # Append semantic tokens and file size
+            no_tokens = estimate_tokens(no_content)
+            no_size_kb = len(no_content.encode("utf-8")) // 1024
+
+            footer = (
+                f"\n\n---\n"
+                f"## SEMANTIC PACK SUMMARY\n"
+                f"- Estimated tokens: ~{no_tokens:,}\n"
+                f"- Output size: ~{no_size_kb} KB\n"
+            )
+            no_content += footer
+
+            Path(no_path).write_text(no_content, encoding="utf-8")
+            print(_color_text(f"[ctxpack] Semantic DSL written to: {no_path}", "green"))
+
+    if args.query:
+        from analyzers.relevance_ranker import rank_modules
+        from dsl_builder import build_dsl_subset
+
+        selected = rank_modules(
+            ctx,
+            args.query,
+            file_hint=args.query_file,
+            symbol_hint=args.query_symbol,
+            max_hops=args.query_hops,
+            top=args.query_top,
+            min_score=args.query_min_score,
+        )
+
+        if args.query_output:
+            query_path = Path(_normalize_path_arg(args.query_output))
+        else:
+            query_path = project_dir / f"{project_dir.name}.query.sem.ctx.md"
+
+        query_content = build_dsl_subset(ctx, selected)
+        query_tokens = estimate_tokens(query_content)
+        query_size_kb = len(query_content.encode("utf-8")) // 1024
+        query_content += (
+            f"\n\n---\n"
+            f"## QUERY PACK SUMMARY\n"
+            f"- Query: {args.query}\n"
+            f"- Modules matched: {len(selected)}\n"
+            f"- Estimated tokens: ~{query_tokens:,}\n"
+            f"- Output size: ~{query_size_kb} KB\n"
+        )
+
+        Path(query_path).write_text(query_content, encoding="utf-8")
+        print(_color_text(f"[ctxpack] Query result written to: {query_path}", "green"))
+
+        if not selected:
+            print(_color_text(
+                "[ctxpack] --query: nenhum modulo relevante encontrado (tente reduzir --query-min-score).",
+                "yellow",
+            ))
+        else:
+            for item in selected[:10]:
+                reasons = ", ".join(item.reasons) or "seed match"
+                print(_color_text(
+                    f"[ctxpack]   {item.score:.2f}  {item.module.name}  ({reasons})", "cyan"
+                ))
+
+        if args.push:
+            workspace = args.push_workspace or str(project_dir.resolve())
+            tag = args.push_tag or f"{project_dir.name}-query"
+            if query_content.strip():
+                push_to_vscode(workspace, tag, query_content)
+            else:
+                print(_color_text("[ctxpack] --push: nenhum conteudo gerado para enviar.", "yellow"))
+
+        sys.exit(0)
 
     if args.semantic_only:
         if args.push:

@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import * as chatUtils from "@vscode/chat-extension-utils";
-import { ContextRingBuffer } from "./ContextRingBuffer";
+import { ContextRingBuffer, ContextSlot } from "./ContextRingBuffer";
 import {
   CtxChatMode,
   CtxResolvedChatMode,
@@ -126,9 +126,8 @@ async function handleAdvisorMode(
   }
 
   // Correlate the prompt against all slot content only when there is a real query.
-  const allContent = slots.map((s) => `### [${s.tag}]\n${s.content}`).join("\n\n");
   const correlations = prompt.length >= 3
-    ? correlateSlotsWithPrompt(prompt, allContent)
+    ? correlateSlotsWithPrompt(prompt, slots)
     : [];
 
   advisorSnapshot("correlating", correlations);
@@ -312,11 +311,21 @@ async function handleInjectionMode(
   );
   onInjectionSnapshot?.({ ...baseSnapshot, status: "reading" });
 
-  const promptContext = hasGlobalSelection
-    ? buffer.buildPromptContextForTags(globalActiveTags, contextTokenBudget)
-    : buffer.buildPromptContext(effectiveMode, contextTokenBudget);
+  // Correlate against the *full* candidate slot set — before any budget
+  // trimming — so a highly relevant slot can never be excluded from ranking
+  // just because pure-recency trimming would have dropped it first. Ranking
+  // and trimming are then applied together in one pass below.
+  const candidateSlots = hasGlobalSelection
+    ? buffer.getSlotsForTags(globalActiveTags)
+    : buffer.getSlotsForChat(effectiveMode);
 
-  const correlations = correlateSlotsWithPrompt(request.prompt, promptContext.content);
+  const correlations = correlateSlotsWithPrompt(request.prompt, candidateSlots);
+
+  const promptContext = correlations.length > 0
+    ? buffer.buildPromptContextRanked(candidateSlots, contextTokenBudget, correlations.map((c) => c.tag))
+    : hasGlobalSelection
+      ? buffer.buildPromptContextForTags(globalActiveTags, contextTokenBudget)
+      : buffer.buildPromptContext(effectiveMode, contextTokenBudget);
 
   const topTermsPreview = correlations
     .flatMap((c) => c.matchedTerms)
@@ -785,41 +794,37 @@ async function sendWithToolFallback(
 // Correlation helpers
 // ---------------------------------------------------------------------------
 
-function tokenizeForCorrelation(text: string): string[] {
+export function tokenizeForCorrelation(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^a-z0-9_]+/)
     .filter((term) => term.length >= 3);
 }
 
-function parseSlotSections(content: string): Array<{ tag: string; body: string }> {
-  const sections: Array<{ tag: string; body: string }> = [];
-  const regex = /^### \[(.+?)\]\n([\s\S]*?)(?=\n\n### \[|$)/gm;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(content)) !== null) {
-    sections.push({ tag: match[1].trim(), body: match[2].trim() });
-  }
-  return sections;
-}
-
-function correlateSlotsWithPrompt(
+/**
+ * Scores each slot's lexical term overlap with the prompt. Operates on raw
+ * ContextSlot objects (not a pre-formatted/pre-trimmed string) so it can run
+ * against the full candidate slot set *before* budget trimming — the result
+ * is used both to rank injection order (handleInjectionMode) and to render
+ * the advisor's relevance table (handleAdvisorMode).
+ */
+export function correlateSlotsWithPrompt(
   prompt: string,
-  promptContextContent: string
+  slots: ContextSlot[]
 ): Array<{ tag: string; score: number; matchedTerms: string[] }> {
   const promptTerms = new Set(tokenizeForCorrelation(prompt));
   if (promptTerms.size === 0) { return []; }
 
-  const sections = parseSlotSections(promptContextContent);
   const result: Array<{ tag: string; score: number; matchedTerms: string[] }> = [];
 
-  for (const section of sections) {
-    const slotTerms   = new Set(tokenizeForCorrelation(section.body));
+  for (const slot of slots) {
+    const slotTerms   = new Set(tokenizeForCorrelation(slot.content));
     const matchedTerms = [...promptTerms].filter((t) => slotTerms.has(t)).slice(0, 6);
     if (matchedTerms.length === 0) { continue; }
 
     const rawScore = matchedTerms.length / Math.max(1, Math.min(promptTerms.size, 12));
     result.push({
-      tag: section.tag,
+      tag: slot.tag,
       score: Math.min(1, Number(rawScore.toFixed(2))),
       matchedTerms,
     });

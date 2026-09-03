@@ -161,4 +161,32 @@ describe("ContextRingBuffer", () => {
     expect(payload.content).toContain("[... truncated for prompt budget ...]");
     expect(payload.estimatedTokens).toBeLessThanOrEqual(60);
   });
+
+  it("buildPromptContextRanked includes a ranked-relevant slot that pure recency would drop", () => {
+    const buffer = new ContextRingBuffer(500);
+    buffer.push("old-relevant", "a".repeat(160));
+    buffer.push("newer-noise", "b".repeat(160));
+    buffer.push("newest-noise", "c".repeat(160));
+
+    // Each 160-char slot costs ~45 estimated tokens, so a 60-token budget
+    // fits exactly one slot — pure recency keeps only "newest-noise".
+    const recency = buffer.buildPromptContext("ask", 60);
+    expect(recency.usedTags).toEqual(["newest-noise"]);
+
+    const slots = buffer.getSlotsForChat("ask");
+    const ranked = buffer.buildPromptContextRanked(slots, 60, ["old-relevant"]);
+    expect(ranked.usedTags).toEqual(["old-relevant"]);
+  });
+
+  it("buildPromptContextRanked falls back to recency order for slots absent from rankedTags", () => {
+    const buffer = new ContextRingBuffer(500);
+    buffer.push("oldest", "a".repeat(160));
+    buffer.push("middle", "b".repeat(160));
+    buffer.push("newest", "c".repeat(160));
+
+    const slots = buffer.getSlotsForChat("ask");
+    // No ranking signal at all — behavior should match buildPromptContext.
+    const ranked = buffer.buildPromptContextRanked(slots, 60, []);
+    expect(ranked.usedTags).toEqual(["newest"]);
+  });
 });

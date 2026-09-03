@@ -4,10 +4,11 @@
 
 ## Recursos
 
-- **Múltiplos Formatos**: Cria diferentes perfis (Semantic DSL por padrão `.sem.ctx.md`, Legível por Humanos `.ctx.md` com `--readable`, e arquivos de Token/Chunk `.tokens.ctx.md`).
+- **Consulta Direcionada**: Peça contexto sobre um arquivo, símbolo ou pergunta em texto livre em vez do repositório inteiro — `--query` ordena módulos por correspondência léxica + proximidade no grafo de imports e gera um subconjunto `.sem.ctx.md` com uma linha `WHY:` explicando cada escolha. Veja [Comando de Consulta](#comando-de-consulta) abaixo.
+- **Múltiplos Perfis de Saída**: Gerados sob demanda, não todos de uma vez — Semantic DSL (`.sem.ctx.md`, escrito por padrão a menos que `--no-semantic`), Legível por Humanos (`.ctx.md`, opcional via `--readable`), e um índice léxico de Token/Chunk (`.tokens.ctx.md`, opcional via `--chunk`/`--embed`).
 - **Modo Semantic DSL**: Extração semântica estrutural com analisadores em Python puro, indexação de imports/relações e inferência inteligente de estado, papel, convenções e contexto quando faltam metadados explícitos.
 - **Árvore de Diretório**: Inclui uma árvore de diretórios ASCII para facilitar a navegação.
-- **Filtragem & Exclusão Inteligentes**: Detecção automática da raiz e exclusões de categorias configuráveis (build, vendor, test, doc, etc.). Whitelist de extensões e exclusão de diretórios/arquivos específicos.
+- **Filtragem & Exclusão Inteligentes**: Detecção automática da raiz e exclusões de categorias configuráveis (build, vendor, test, doc, etc., ajustável via `--exclude-category`/`--include-category`). Whitelist de extensões e exclusão de diretórios/arquivos específicos.
 - **Remoção de Comentários**: Opção para remover comentários de linha única para economizar tokens.
 - **Limites de Tamanho de Arquivo**: Ignora arquivos que sejam muito grandes.
 - **Estimativa de Tokens**: Fornece uma estimativa aproximada da contagem de tokens.
@@ -24,7 +25,13 @@ uso: ctxpack.py [-h] [-o OUTPUT] [-e EXT [EXT ...]] [-x NAME [NAME ...]]
                   [--embed] [--embed-dim EMBED_DIM] [--readable]
                   [--readable-output READABLE_OUTPUT] [--update]
                   [--remote-url REMOTE_URL] [--semantic] [--no-semantic]
-                  [--semantic-only] [--now TEXT] [--no-output FILE]
+                  [--semantic-only] [--now TEXT] [--no-output FILE] [--push]
+                  [--push-tag TAG] [--push-workspace PATH]
+                  [--exclude-category NAME [NAME ...]]
+                  [--include-category NAME [NAME ...]] [--query TEXT]
+                  [--file PATH] [--symbol NAME] [--query-top QUERY_TOP]
+                  [--query-min-score QUERY_MIN_SCORE]
+                  [--query-hops QUERY_HOPS] [--query-output FILE]
                   [project_dir]
 
 ctxpack — Colapsa um projeto em um arquivo de contexto pronto para LLM.
@@ -59,8 +66,9 @@ opções:
   --chunk-overlap CHUNK_OVERLAP
                         Sobreposição de linhas entre chunks consecutivos
                         (padrão: 20).
-  --embed               Calcula embeddings determinísticos para cada chunk
-                        usando Python puro.
+  --embed               Calcula uma impressão digital de tokens via hash
+                        determinístico por chunk, usando Python puro (não é
+                        um modelo de embedding semântico real).
   --embed-dim EMBED_DIM
                         Dimensão do vetor de embedding quando --embed estiver
                         habilitado (padrão: 64).
@@ -73,6 +81,20 @@ opções:
                         (git@github.com:Gabryel-lima/CtxPack.git).
   --remote-url REMOTE_URL
                         Sobrescreve a URL remota usada por --update.
+  --push                Envia a saída gerada para o ContextRingBuffer da
+                        extensão VS Code via IPC. Requer a extensão em
+                        execução no VS Code.
+  --push-tag TAG        Tag do slot de destino no buffer (padrão: nome do
+                        diretório do projeto).
+  --push-workspace PATH
+                        Raiz do workspace VS Code usada para resolver o
+                        caminho do socket IPC. Padrão: project_dir resolvido.
+  --exclude-category NAME [NAME ...]
+                        Exclui estas categorias de caminho (padrão: vendor,
+                        build, vcs, env).
+  --include-category NAME [NAME ...]
+                        Força a inclusão destas categorias, sobrescrevendo
+                        --exclude-category (padrão: test, docs).
 
 saída do DSL semântico:
   --semantic            Gera .sem.ctx.md com a saída semântica
@@ -82,6 +104,72 @@ saída do DSL semântico:
   --now TEXT            Define manualmente o campo NOW (foco atual do projeto)
   --no-output FILE      Caminho para o arquivo semântico (padrão:
                         <project_name>.sem.ctx.md)
+
+consulta direcionada:
+  --query TEXT          Pede contexto relevante para TEXT em vez de
+                        despejar o repositório inteiro. Grava um subconjunto
+                        do DSL semântico, ordenado por relevância léxica e
+                        proximidade no grafo de imports.
+  --file PATH           Dica opcional de caminho de arquivo para --query
+                        (reforça módulos que casam com esse caminho).
+  --symbol NAME         Dica opcional de nome de símbolo para --query
+                        (reforça módulos que definem esse símbolo).
+  --query-top QUERY_TOP
+                        Número máximo de módulos incluídos no resultado da
+                        consulta (padrão: 15).
+  --query-min-score QUERY_MIN_SCORE
+                        Pontuação mínima de relevância para um módulo ser
+                        incluído (padrão: 0.05).
+  --query-hops QUERY_HOPS
+                        Número máximo de saltos no grafo de imports para
+                        propagar relevância (padrão: 2).
+  --query-output FILE   Caminho para o arquivo de resultado da consulta
+                        (padrão: <project_name>.query.sem.ctx.md).
+```
+
+### Comando de Consulta
+
+Em vez de sempre despejar o repositório inteiro, `--query` ordena os módulos
+por uma heurística leve e sem dependências — correspondência léxica/substring
+contra nomes de módulos, caminhos, símbolos e tags, reforçada pela proximidade
+no grafo de imports — e grava apenas os melhores resultados em
+`<project_name>.query.sem.ctx.md`. Cada módulo selecionado recebe uma linha
+`WHY:` explicando qual sinal casou (nome/símbolo/papel/tag, ou distância no
+grafo).
+
+```bash
+# Pergunta em texto livre
+python ctxpack.py . --query "como funciona a autenticação" --query-top 10
+
+# Refinando a busca com uma dica de arquivo
+python ctxpack.py . --query "fluxo de auth" --file src/auth/login.py --query-top 5
+
+# Refinando com uma dica de símbolo e enviando o resultado para o buffer do VS Code
+python ctxpack.py . --query "controle de sessão" --symbol login --push
+```
+
+`--file`/`--symbol` são dicas que reforçam módulos correspondentes — só têm
+efeito junto com `--query`; usadas sozinhas (sem `--query`) são ignoradas e o
+CtxPack volta ao comportamento normal de pacote completo.
+
+O resultado da consulta nunca é gravado em `.sem.ctx.md` — sempre vai para um
+arquivo `*.query.sem.ctx.md` separado (ou o caminho passado via
+`--query-output`), então uma consulta direcionada nunca sobrescreve um pacote
+completo do projeto.
+
+### Excluindo ou forçando categorias
+
+`--exclude-category` / `--include-category` ajustam o mesmo filtro de
+categorias usado internamente na construção da árvore (`vendor`, `build`,
+`vcs`, `test`, `docs`, `env` — veja `filters/exclusion.py`). Por padrão,
+`vendor`, `build`, `vcs` e `env` são excluídos, enquanto `test` e `docs` são
+forçadamente incluídos; use as flags para sobrescrever esse padrão.
+`--include-category` sempre vence `--exclude-category` para uma categoria
+citada nas duas.
+
+```bash
+# Exclui também arquivos de teste, além dos padrões
+python ctxpack.py . --exclude-category test --query "parser" --query-top 10
 ```
 
 ## Exemplos
@@ -187,9 +275,9 @@ Observação: quando houver slots ativos selecionados, eles são priorizados com
 
 ### Fluxo recomendado de uso
 
-1. Decida se você precisa de um trecho local ou de um panorama do projeto.
+1. Decida se você precisa de um trecho local, de um panorama do projeto, ou de contexto para uma pergunta específica.
 2. Para trabalho local, faça push da seleção ou do arquivo.
-3. Para contexto do workspace inteiro, rode `CtxPack: Generate semantic pack and push to buffer`.
+3. Para contexto do workspace inteiro, rode `CtxPack: Generate semantic pack and push to buffer`. Para uma pergunta ou tarefa específica, rode `CtxPack: Query workspace and push targeted context` — ele envia só os módulos relevantes, ordenados por relevância, em vez do workspace inteiro.
 4. Se quiser que a IA enxergue apenas um arquivo, diretório, ou grupo específico de slots em toda iteração, rode `CtxPack: Choose active slots for dynamic context`.
 5. Inspecione ou remova slots antigos se necessário.
 6. No Copilot Chat com o participante CtxPack, envie o prompt normalmente depois que o buffer e o escopo ativo refletirem a tarefa atual.
@@ -222,6 +310,7 @@ Se quiser um ponto de entrada guiado, execute `CtxPack: Open context workflow wi
 - `ctxpack.exportSemantic`: gera `<workspace>.sem.ctx.md` dentro da extensão.
 - `ctxpack.exportReadable`: gera `<workspace>.ctx.md` dentro da extensão.
 - `ctxpack.pushWorkspaceSemantic`: gera um pacote semântico do projeto e envia o resultado ao buffer via IPC.
+- `ctxpack.queryWorkspace`: faz uma pergunta e envia ao buffer apenas os módulos relevantes, ordenados por relevância — em vez do workspace inteiro.
 - `ctxpack.createPackignore`: gera um template `.packignore` dentro da extensão.
 - `ctxpack.wizard`: abre um menu único com os principais fluxos de push, escopo, exportação e limpeza.
 
@@ -335,6 +424,8 @@ python ctxpack.py --update --remote-url git@github.com:Gabryel-lima/CtxPack.git
 O script percorre o diretório do projeto, filtra arquivos com base nos seus critérios e concatena-os em um único arquivo Markdown. O conteúdo de cada arquivo é colocado dentro de um bloco de código cercado por fences, tornando-o fácil de ser analisado por modelos de linguagem.
 
 Na saída semântica, o CtxPack combina múltiplos analisadores: detecção de linguagem, extração de dependências, mapeamento de módulos, inferência de relações, extração de símbolos e enriquecimento de metadados/contexto. Quando tags explícitas não existem, ele deriva contexto a partir de comentários iniciais, estrutura de símbolos, nomes de arquivo e heurísticas do projeto.
+
+O `--query` roda em cima desse mesmo contexto já analisado: é uma heurística de correspondência léxica/substring + proximidade no grafo de imports (`analyzers/relevance_ranker.py`), não um ranqueador de machine learning ou baseado em embeddings. É explicável (cada resultado registra *por que* foi selecionado) e não tem dependências externas, mas não captura sinônimos nem relações puramente semânticas que não compartilhem vocabulário com a consulta.
 
 ## Extração Semântica Embutida
 

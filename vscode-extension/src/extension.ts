@@ -13,6 +13,7 @@ import { createIpcServer, getSocketPath } from "./IpcServer";
 import { buildPathContext, pickPath } from "./PathContextBuilder";
 import {
   createPackignoreTemplate,
+  createQueryPack,
   createReadablePack,
   createSemanticPack,
   CtxChatMode,
@@ -521,6 +522,53 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   );
 
+  const queryWorkspaceDisposable = registerCtxCommand(
+    "ctxpack.queryWorkspace",
+    async () => {
+      const workspaceRoot = getWorkspaceRootOrWarn();
+      if (!workspaceRoot) { return; }
+
+      const query = await vscode.window.showInputBox({
+        title:          "CtxPack: Query workspace",
+        prompt:         "Ask for context about a file, symbol, or topic instead of dumping the whole workspace",
+        placeHolder:    "e.g. how does authentication work?",
+        ignoreFocusOut: true,
+        validateInput:  (value) => (value.trim() ? undefined : "Enter a non-empty query."),
+      });
+      if (!query?.trim()) { return; }
+
+      const slug = query.trim().toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 30) || "query";
+      const defaultTag = `${getWorkspaceDefaultTag(workspaceRoot)}-query-${slug}`;
+
+      try {
+        const built = await vscode.window.withProgress(
+          {
+            location:    vscode.ProgressLocation.Notification,
+            title:       "CtxPack: ranking workspace context for your query",
+            cancellable: false,
+          },
+          async () => createQueryPack(workspaceRoot, query.trim())
+        );
+
+        if (built.fileCount === 0) {
+          vscode.window.showWarningMessage(
+            "CtxPack: no relevant modules found for that query. Try different wording."
+          );
+          return;
+        }
+
+        buffer.push(defaultTag, built.content);
+        updateStatusBar();
+        vscode.window.showInformationMessage(
+          `CtxPack: query pushed ${built.fileCount} module(s) as '${defaultTag}'.`
+        );
+        await askToActivateTag(defaultTag);
+      } catch (error) {
+        vscode.window.showErrorMessage(`CtxPack: failed to run query. ${String(error)}`);
+      }
+    }
+  );
+
   const createPackignoreDisposable = registerCtxCommand(
     "ctxpack.createPackignore",
     async () => {
@@ -554,6 +602,7 @@ export function activate(context: vscode.ExtensionContext): void {
         { label: "Choose active slots for dynamic context",   value: "selectActiveSlots"     },
         { label: "Show current dynamic context scope",        value: "slotScopeStatus"       },
         { label: "Generate semantic pack and push",           value: "pushWorkspaceSemantic" },
+        { label: "Query workspace and push targeted context", value: "queryWorkspace"        },
         { label: "Generate semantic project pack",            value: "exportSemantic"        },
         { label: "Generate readable project pack",            value: "exportReadable"        },
         { label: "Inspect buffered slot",                     value: "inspectSlot"           },
@@ -583,6 +632,7 @@ export function activate(context: vscode.ExtensionContext): void {
     exportSemanticDisposable,
     exportReadableDisposable,
     pushWorkspaceSemanticDisposable,
+    queryWorkspaceDisposable,
     createPackignoreDisposable,
     wizardDisposable
   );
